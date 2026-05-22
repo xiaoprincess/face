@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>注册 - 器材申请系统</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .register-container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 40px;
+            width: 100%;
+            max-width: 500px;
+            animation: slideIn 0.5s ease-out;
+        }
+        
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .logo { text-align: center; margin-bottom: 30px; }
+        .logo h1 { color: #667eea; font-size: 32px; margin-bottom: 10px; }
+        .logo p { color: #999; font-size: 14px; }
+        h2 { text-align: center; color: #333; margin-bottom: 30px; font-size: 24px; }
+        
+        .form-group { margin-bottom: 20px; }
+        label { display: block; margin-bottom: 8px; color: #555; font-weight: 500; }
+        
+        .input-icon { position: relative; }
+        .input-icon input {
+            width: 100%; padding: 12px 15px 12px 45px;
+            border: 2px solid #e0e0e0; border-radius: 10px; font-size: 16px;
+        }
+        .input-icon input:focus {
+            outline: none; border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        .input-icon .icon {
+            position: absolute; left: 15px; top: 50%;
+            transform: translateY(-50%); color: #999; font-size: 18px;
+        }
+        
+        button {
+            width: 100%; padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white; border: none; border-radius: 10px;
+            font-size: 16px; font-weight: 600; cursor: pointer; margin-top: 10px;
+        }
+        button:hover { transform: translateY(-2px); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        .links { text-align: center; margin-top: 20px; }
+        .links a { color: #667eea; text-decoration: none; }
+        .links a:hover { text-decoration: underline; }
+        
+        .error {
+            background: #fee; color: #c33; padding: 12px;
+            border-radius: 10px; margin-bottom: 20px; text-align: center;
+        }
+        
+        .password-strength { margin-top: 5px; font-size: 12px; color: #999; }
+        
+        .face-section {
+            margin-top: 20px; padding-top: 20px;
+            border-top: 2px dashed #e0e0e0;
+        }
+        .face-section h3 { color: #333; font-size: 18px; margin-bottom: 15px; text-align: center; }
+        .face-capture-container { text-align: center; }
+        
+        #faceVideo {
+            width: 100%; max-width: 400px; border-radius: 15px;
+            border: 3px solid #667eea; margin: 0 auto; display: block; background: #000;
+        }
+        
+        .face-status { margin-top: 10px; padding: 10px; border-radius: 10px; font-size: 14px; }
+        .face-status.info { background: #e8f0fe; color: #667eea; }
+        .face-status.success { background: #d4edda; color: #155724; }
+        .face-status.error { background: #f8d7da; color: #721c24; }
+        
+        #faceImage { max-width: 100%; border-radius: 15px; border: 3px solid #4CAF50; }
+        
+        .btn-group { display: flex; gap: 10px; justify-content: center; margin-top: 15px; }
+        .btn-capture {
+            width: auto; padding: 10px 25px; margin: 10px 5px;
+            display: inline-block; border: none; border-radius: 8px; cursor: pointer;
+        }
+        .btn-capture.primary { background: #4CAF50; color: white; }
+        .btn-capture.secondary { background: #ff9800; color: white; }
+        
+        .required-badge { color: #f44336; margin-left: 5px; }
+    </style>
+</head>
+<body>
+    <div class="register-container">
+        <div class="logo">
+            <h1>🏢 器材管家</h1>
+            <p>创建您的账号</p>
+        </div>
+        
+        <h2>用户注册</h2>
+        
+        {% if error %}
+        <div class="error">{{ error }}</div>
+        {% endif %}
+        
+        <form method="POST" action="/register" id="registerForm">
+            <div class="form-group">
+                <label>用户名 <span class="required-badge">*</span></label>
+                <div class="input-icon">
+                    <span class="icon">👤</span>
+                    <input type="text" name="username" id="username" required placeholder="请输入用户名" value="{{ username or '' }}">
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label>密码 <span class="required-badge">*</span></label>
+                <div class="input-icon">
+                    <span class="icon">🔒</span>
+                    <input type="password" name="password" id="password" required placeholder="请输入密码">
+                </div>
+                <div class="password-strength" id="passwordStrength"></div>
+            </div>
+            
+            <div class="form-group">
+                <label>确认密码 <span class="required-badge">*</span></label>
+                <div class="input-icon">
+                    <span class="icon">✓</span>
+                    <input type="password" name="confirm_password" id="confirm_password" required placeholder="再次输入密码">
+                </div>
+            </div>
+            
+            <!-- 人脸采集区域 -->
+            <div class="face-section">
+                <h3>😊 人脸采集 <span class="required-badge">*</span></h3>
+                <div class="face-capture-container">
+                    <video id="faceVideo" autoplay playsinline muted></video>
+                    <canvas id="faceCanvas" style="display: none;"></canvas>
+                    
+                    <div id="faceStatus" class="face-status info">
+                        <span id="faceStatusText">正在初始化摄像头...</span>
+                    </div>
+                    
+                    <div id="facePreview" style="display: none;">
+                        <img id="faceImage" src="" alt="采集的人脸">
+                        <p style="color: #4CAF50; margin-top: 10px;">✅ 人脸已采集</p>
+                    </div>
+                    
+                    <div class="btn-group">
+                        <button type="button" id="captureBtn" class="btn-capture primary" disabled>
+                            📷 采集人脸
+                        </button>
+                        <button type="button" id="recaptureBtn" class="btn-capture secondary" style="display: none;">
+                            🔄 重新采集
+                        </button>
+                    </div>
+                    
+                    <input type="hidden" name="face_descriptor" id="faceDescriptor">
+                </div>
+            </div>
+            
+            <button type="submit" id="submitBtn">注 册</button>
+        </form>
+        
+        <div class="links">
+            <a href="/login">已有账号？返回登录</a>
+        </div>
+    </div>
+    
+    <script>
+    let stream = null;
+    let faceCaptured = false;
+
+    async function initCamera() {
+        const video = document.getElementById('faceVideo');
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'user', width: 640, height: 480 }
+            });
+            video.srcObject = stream;
+            document.getElementById('faceStatusText').textContent = '✅ 摄像头已就绪，请点击采集';
+            document.getElementById('faceStatus').className = 'face-status success';
+            document.getElementById('captureBtn').disabled = false;
+        } catch (err) {
+            document.getElementById('faceStatusText').textContent = '❌ 无法访问摄像头';
+            document.getElementById('faceStatus').className = 'face-status error';
+        }
+    }
+
+    function captureFace() {
+        const video = document.getElementById('faceVideo');
+        const canvas = document.getElementById('faceCanvas');
+        
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+        
+        const imageData = canvas.toDataURL('image/jpeg');
+        document.getElementById('faceImage').src = imageData;
+        document.getElementById('faceDescriptor').value = imageData;
+        
+        document.getElementById('facePreview').style.display = 'block';
+        document.getElementById('faceVideo').style.display = 'none';
+        document.getElementById('captureBtn').style.display = 'none';
+        document.getElementById('recaptureBtn').style.display = 'inline-block';
+        document.getElementById('faceStatusText').textContent = '✅ 人脸已采集';
+        document.getElementById('faceStatus').className = 'face-status success';
+        
+        faceCaptured = true;
+        
+        if (stream) {
+            stream.getTracks().forEach(track => track.stop());
+            stream = null;
+        }
+    }
+
+    function recaptureFace() {
+        document.getElementById('facePreview').style.display = 'none';
+        document.getElementById('faceVideo').style.display = 'block';
+        document.getElementById('captureBtn').style.display = 'inline-block';
+        document.getElementById('recaptureBtn').style.display = 'none';
+        
+        faceCaptured = false;
+        document.getElementById('faceDescriptor').value = '';
+        initCamera();
+    }
+
+    function validateForm() {
+        const password = document.getElementById('password').value;
+        const confirmPassword = document.getElementById('confirm_password').value;
+        if (password !== confirmPassword) { alert('两次密码不一致'); return false; }
+        if (!faceCaptured) { alert('请采集人脸'); return false; }
+        return true;
+    }
+
+    document.getElementById('password').addEventListener('input', function() {
+        const p = this.value;
+        const s = document.getElementById('passwordStrength');
+        if (p.length === 0) s.textContent = '';
+        else if (p.length < 4) { s.textContent = '弱'; s.style.color = '#f44336'; }
+        else if (p.length < 8) { s.textContent = '中'; s.style.color = '#ff9800'; }
+        else { s.textContent = '强'; s.style.color = '#4CAF50'; }
+    });
+
+    document.getElementById('captureBtn').addEventListener('click', captureFace);
+    document.getElementById('recaptureBtn').addEventListener('click', recaptureFace);
+    
+    document.getElementById('registerForm').addEventListener('submit', function(e) {
+    if (!validateForm()) {
+        e.preventDefault();
+    }
+    // 如果验证通过，正常提交表单（不需要异步）
+});
+
+    window.addEventListener('load', initCamera);
+    window.addEventListener('beforeunload', function() {
+        if (stream) stream.getTracks().forEach(track => track.stop());
+    });
+    </script>
+</body>
+</html>
