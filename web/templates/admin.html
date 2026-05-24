@@ -544,14 +544,20 @@
                             <td>
                                 <strong>{{ user.application_count }}</strong> 个申请
                             </td>
-                            <td>
+                                                        <td>
                                 {% if user.role == 'admin' and user.id != session.user_id %}
                                 <form method="POST" action="/remove_admin/{{ user.id }}" style="display: inline;" onsubmit="return confirm('确定要移除 {{ user.username }} 的管理员权限吗？');">
                                     <button type="submit" class="btn btn-danger" style="padding: 5px 12px; font-size: 12px;">移除管理员</button>
                                 </form>
+                                <form method="POST" action="/delete_user/{{ user.id }}" style="display: inline; margin-left: 5px;" onsubmit="return confirm('确定要删除用户 {{ user.username }} 吗？此操作不可恢复！');">
+                                    <button type="submit" class="btn btn-danger" style="padding: 5px 12px; font-size: 12px; background: #c0392b;">删除</button>
+                                </form>
                                 {% elif user.role == 'user' %}
                                 <form method="POST" action="/make_admin/{{ user.id }}" style="display: inline;" onsubmit="return confirm('确定要将 {{ user.username }} 设为管理员吗？');">
                                     <button type="submit" class="btn btn-success" style="padding: 5px 12px; font-size: 12px;">设为管理员</button>
+                                </form>
+                                <form method="POST" action="/delete_user/{{ user.id }}" style="display: inline; margin-left: 5px;" onsubmit="return confirm('确定要删除用户 {{ user.username }} 吗？此操作不可恢复！');">
+                                    <button type="submit" class="btn btn-danger" style="padding: 5px 12px; font-size: 12px; background: #c0392b;">删除</button>
                                 </form>
                                 {% else %}
                                 <span style="color: #999;">当前用户</span>

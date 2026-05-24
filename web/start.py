@@ -561,8 +561,10 @@ def remove_admin(user_id):
 @app.route('/api/face_verify', methods=['POST'])
 def api_face_verify():
     """face.py调用：人脸验证并创建申请"""
+    print("🔔 收到人脸验证请求")
     try:
         data = request.get_json()
+        print(f"📝 数据: equipment={data.get('equipment_name')}")
         image_base64 = data.get('image', '')
         equipment_name = data.get('equipment_name', '')
         
@@ -692,6 +694,27 @@ def api_face_apply():
     except Exception as e:
         print(f"❌ 处理申请错误: {e}")
         return jsonify({'success': False, 'message': str(e)}), 500
+@app.route('/delete_user/<int:user_id>', methods=['POST'])
+def delete_user(user_id):
+    """删除用户"""
+    if 'user_id' not in session or session.get('role') != 'admin':
+        return redirect(url_for('login_page'))
+    
+    # 不能删除自己
+    if user_id == session['user_id']:
+        return redirect(url_for('admin_panel'))
+    
+    conn = get_db()
+    
+    # 删除用户的申请记录
+    conn.execute("DELETE FROM applications WHERE user_id = ?", (user_id,))
+    # 删除用户
+    conn.execute("DELETE FROM users WHERE id = ? AND username != 'admin'", (user_id,))
+    
+    conn.commit()
+    conn.close()
+    
+    return redirect(url_for('admin_panel'))
 if __name__ == '__main__':
     if not os.path.exists('templates'):
         os.makedirs('templates')

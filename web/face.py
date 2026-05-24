@@ -10,7 +10,7 @@ import urllib3
 urllib3.disable_warnings()
 
 SERVER_URL = "https://127.0.0.1:5000"
-TIMEOUT = 10
+TIMEOUT = 30
 IMAGE_PATH = "/tmp/face_capture.jpg"
 
 def capture_photo():
@@ -63,7 +63,7 @@ def capture_face():
         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(gray, 1.1, 5, minSize=(80, 80))
+        faces = face_cascade.detectMultiScale(gray, 1.05, 3, minSize=(60,60))
         
         elapsed = int(time.time() - start_time)
         remaining = TIMEOUT - elapsed
@@ -92,7 +92,7 @@ def verify_and_apply(equipment_name):
         resp = requests.post(
             f"{SERVER_URL}/api/face_verify",
             json={"image": image, "equipment_name": equipment_name},
-            verify=False, timeout=10
+            verify=False, timeout=30
         )
         result = resp.json()
         
