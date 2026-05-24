@@ -1,3 +1,4 @@
+#source /home/xiao/face/face_env/bin/activate
 from flask import Flask, render_template, request, redirect, url_for, session, send_from_directory, jsonify
 from aip import AipFace
 import base64
@@ -394,9 +395,10 @@ def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 # ==================== 接收ESP32指令 ====================
+# ==================== 接收ESP32指令 ====================
 @app.route('/command', methods=['GET'])
 def receive_command():
-    """接收ESP32发来的器材名称并自动创建申请"""
+    """接收ESP32发来的器材名称，触发人脸验证"""
     try:
         client_ip = request.remote_addr
         receive_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -410,41 +412,15 @@ def receive_command():
         print(f"📨 收到来自 {client_ip} 的申请")
         print(f"⏰ 接收时间: {receive_time}")
         print(f"📝 器材名称: {equipment_name}")
+        print(f"🔍 请进行人脸验证...")
         print("="*60 + "\n")
         
-        conn = get_db()
+        # 调用face.py进行人脸验证
+        import subprocess
+        face_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'face.py')
+        subprocess.Popen(['python3', face_script, equipment_name])
         
-        esp32_user = conn.execute(
-            "SELECT id FROM users WHERE username = 'esp32_device'"
-        ).fetchone()
-        
-        if not esp32_user:
-            device_password = hashlib.sha256('esp32_device_auto'.encode()).hexdigest()
-            cursor = conn.cursor()
-            cursor.execute(
-                'INSERT INTO users (username, password, role) VALUES (?, ?, ?)',
-                ('esp32_device', device_password, 'user')
-            )
-            user_id = cursor.lastrowid
-            conn.commit()
-        else:
-            user_id = esp32_user['id']
-        
-        purpose = f"[自动申请] 来自ESP32设备 ({client_ip})"
-        
-        conn.execute('''
-            INSERT INTO applications 
-            (user_id, equipment_name, quantity, purpose, status) 
-            VALUES (?, ?, ?, ?, ?)
-        ''', (user_id, equipment_name, '1', purpose, 'pending'))
-        
-        conn.commit()
-        app_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-        conn.close()
-        
-        print(f"✅ 已自动创建器材申请 (ID: #{app_id})")
-        print("="*60 + "\n")
-        return f"OK", 200
+        return f"OK, face verification started for: {equipment_name}", 200
         
     except Exception as e:
         print(f"❌ 处理指令错误: {e}")
@@ -582,68 +558,73 @@ def remove_admin(user_id):
     return redirect(url_for('admin_panel'))
 # ==================== 接收ESP32人脸识别结果 ====================
 
-@app.route('/api/face_notification', methods=['POST'])
-def api_face_notification():
-    """接收ESP32发来的人脸识别通知，并自动创建申请"""
+@app.route('/api/face_verify', methods=['POST'])
+def api_face_verify():
+    """face.py调用：人脸验证并创建申请"""
     try:
         data = request.get_json()
+        image_base64 = data.get('image', '')
+        equipment_name = data.get('equipment_name', '')
         
-        if not data:
-            return jsonify({'success': False, 'message': '无效数据'}), 400
+        if not image_base64 or not equipment_name:
+            return jsonify({'success': False, 'message': '缺少参数'})
         
-        event = data.get('event', '')
-        user_id = data.get('user_id', '')
-        score = data.get('score', 0)
-        timestamp = data.get('timestamp', '')
-        message = data.get('message', '')
-        device = data.get('device', 'esp32')
+        if 'base64,' in image_base64:
+            image_base64 = image_base64.split('base64,')[1]
         
-        # 打印接收到的数据
-        print("\n" + "="*60)
-        print(f"📨 收到来自 {device} 的人脸识别通知")
-        print(f"⏰ 时间: {timestamp}")
-        print(f"👤 用户ID: {user_id}")
-        print(f"🎯 匹配分数: {score}")
-        print(f"📝 消息: {message}")
-        print("="*60 + "\n")
+        # 调用百度AI搜索人脸
+        result = face_client.search(
+            image=image_base64,
+            image_type='BASE64',
+            group_id_list=GROUP_ID,
+        )
+        
+        if result.get('error_code') != 0:
+            return jsonify({'success': False, 'message': '人脸识别失败'})
+        
+        user_list = result.get('result', {}).get('user_list', [])
+        if not user_list:
+            return jsonify({'success': False, 'message': '未找到匹配人脸，请先注册'})
+        
+        top_user = user_list[0]
+        score = float(top_user.get('score', 0))
+        user_id = top_user.get('user_id', '')
+        
+        if score < 70:
+            return jsonify({'success': False, 'message': f'匹配度过低({score:.1f})，请重试'})
         
         # 查找用户
         conn = get_db()
-        user = conn.execute(
-            'SELECT * FROM users WHERE id = ?', (user_id,)
-        ).fetchone()
+        user = conn.execute('SELECT * FROM users WHERE id = ?', (int(user_id),)).fetchone()
         
         if not user:
             conn.close()
-            print(f"⚠️ 用户 {user_id} 不存在")
-            return jsonify({'success': False, 'message': '用户不存在'}), 404
+            return jsonify({'success': False, 'message': '用户不存在'})
         
-        print(f"✅ 识别用户: {user['username']} (角色: {user['role']})")
-        
-        # 获取该用户最近的申请记录
-        recent_apps = conn.execute('''
-            SELECT * FROM applications 
-            WHERE user_id = ? 
-            ORDER BY created_at DESC 
-            LIMIT 5
-        ''', (user_id,)).fetchall()
-        
+        # 创建器材申请
+        purpose = f"[人脸验证自动申请] 验证分数: {score:.1f}"
+        conn.execute('''
+            INSERT INTO applications 
+            (user_id, equipment_name, quantity, purpose, status) 
+            VALUES (?, ?, ?, ?, ?)
+        ''', (user_id, equipment_name, '1', purpose, 'pending'))
+        conn.commit()
+        app_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         conn.close()
+        
+        print(f"✅ 人脸验证: {user['username']} (分数:{score:.1f})")
+        print(f"✅ 已创建申请: {equipment_name} (ID: #{app_id})")
         
         return jsonify({
             'success': True,
-            'message': '通知已接收',
-            'user': {
-                'id': user['id'],
-                'username': user['username'],
-                'role': user['role']
-            },
-            'recent_applications': [dict(app) for app in recent_apps]
+            'username': user['username'],
+            'score': score,
+            'application_id': app_id,
+            'equipment': equipment_name
         })
         
     except Exception as e:
-        print(f"❌ 处理通知错误: {e}")
-        return jsonify({'success': False, 'message': str(e)}), 500
+        return jsonify({'success': False, 'message': str(e)})
 
 
 @app.route('/api/face_apply', methods=['POST'])
