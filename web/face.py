@@ -1,11 +1,10 @@
-# face.py - 人脸验证程序（CSI摄像头版）
+# face.py - 百度AI人脸验证（跳过本地检测）
 import time
 import requests
 import base64
 import sys
 import subprocess
 import os
-import cv2
 import urllib3
 urllib3.disable_warnings()
 
@@ -14,101 +13,58 @@ TIMEOUT = 30
 IMAGE_PATH = "/tmp/face_capture.jpg"
 
 def capture_photo():
-    """用rpicam拍照"""
-    print("📷 正在拍照...")
+    """拍照"""
+    if os.path.exists(IMAGE_PATH):
+        os.remove(IMAGE_PATH)
     
-    # 尝试不同的拍照命令
-    commands = [
-        ['rpicam-still', '-o', IMAGE_PATH, '--width', '640', '--height', '480', '-t', '100'],
-        ['libcamera-still', '-o', IMAGE_PATH, '--width', '640', '--height', '480', '-t', '100'],
-        ['raspistill', '-o', IMAGE_PATH, '-w', '640', '-h', '480', '-t', '100'],
-    ]
+    cmd = ['rpicam-still', '-o', IMAGE_PATH, '--width', '640', '--height', '480', '-t', '200', '--nopreview']
+    result = subprocess.run(cmd, capture_output=True, timeout=10)
     
-    for cmd in commands:
-        try:
-            result = subprocess.run(cmd, capture_output=True, timeout=5)
-            if result.returncode == 0 and os.path.exists(IMAGE_PATH):
-                print(f"✅ 拍照成功: {cmd[0]}")
-                
-                # 读取照片
-                frame = cv2.imread(IMAGE_PATH)
-                if frame is not None:
-                    _, buffer = cv2.imencode('.jpg', frame)
-                    return base64.b64encode(buffer).decode('utf-8')
-        except:
-            continue
-    
-    print("❌ 所有拍照命令都失败")
+    if os.path.exists(IMAGE_PATH) and os.path.getsize(IMAGE_PATH) > 0:
+        with open(IMAGE_PATH, 'rb') as f:
+            return base64.b64encode(f.read()).decode('utf-8')
     return None
 
-def capture_face():
-    """检测人脸"""
-    print(f"⏰ 等待人脸中...（超时: {TIMEOUT}秒）")
+def main():
+    equipment = sys.argv[1] if len(sys.argv) > 1 else "测试"
+    print(f"🔍 验证: {equipment}")
+    print(f"⏰ 超时: {TIMEOUT}秒")
     
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
     start_time = time.time()
     
     while time.time() - start_time < TIMEOUT:
-        # 拍照
-        image_base64 = capture_photo()
-        if not image_base64:
-            return None
+        remaining = TIMEOUT - int(time.time() - start_time)
+        print(f"📷 拍照中... 剩余 {remaining} 秒")
         
-        # 检测人脸
-        img_data = base64.b64decode(image_base64)
-        nparr = cv2.imdecode(np.frombuffer(img_data, np.uint8), cv2.IMREAD_COLOR) if 'np' in dir() else None
+        image = capture_photo()
+        if not image:
+            time.sleep(2)
+            continue
         
-        import numpy as np
-        nparr = np.frombuffer(base64.b64decode(image_base64), np.uint8)
-        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        # 直接发给百度AI识别
+        try:
+            resp = requests.post(
+                f"{SERVER_URL}/api/face_verify",
+                json={"image": image, "equipment_name": equipment},
+                verify=False, timeout=30
+            )
+            result = resp.json()
+            
+            if result.get('success'):
+                print(f"✅ {result.get('username')} 申请成功！")
+                return
+            else:
+                msg = result.get('message', '')
+                if '未找到匹配' in msg:
+                    print(f"⏳ 未识别到人脸，重试...")
+                else:
+                    print(f"❌ {msg}")
+        except Exception as e:
+            print(f"⚠️ 请求失败: {e}")
         
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(gray, 1.05, 3, minSize=(60,60))
-        
-        elapsed = int(time.time() - start_time)
-        remaining = TIMEOUT - elapsed
-        
-        if len(faces) > 0:
-            print(f"✅ 检测到人脸！剩余 {remaining} 秒")
-            return image_base64
-        
-        if elapsed % 5 == 0:
-            print(f"⏳ 未检测到人脸... 剩余 {remaining} 秒")
-        
-        time.sleep(1)
+        time.sleep(3)
     
-    print(f"⏰ 超时！{TIMEOUT}秒内未检测到人脸")
-    return None
-
-def verify_and_apply(equipment_name):
-    print(f"\n🔍 正在验证: {equipment_name}")
-    
-    image = capture_face()
-    if not image:
-        print("❌ 无人脸，申请取消")
-        return False
-    
-    try:
-        resp = requests.post(
-            f"{SERVER_URL}/api/face_verify",
-            json={"image": image, "equipment_name": equipment_name},
-            verify=False, timeout=30
-        )
-        result = resp.json()
-        
-        if result.get('success'):
-            print(f"✅ {result.get('username')} 申请成功")
-            return True
-        else:
-            print(f"❌ {result.get('message')}")
-            return False
-    except Exception as e:
-        print(f"❌ 请求失败: {e}")
-        return False
+    print("⏰ 超时，无人脸识别成功")
 
 if __name__ == '__main__':
-    if len(sys.argv) > 1:
-        equipment = sys.argv[1]
-        verify_and_apply(equipment)
-    else:
-        print("用法: python3 face.py <器材名称>")
+    main()
