@@ -730,4 +730,4 @@ if __name__ == '__main__':
     print("📷 人脸识别: 百度AI API")
     print("📁 上传文件目录: static/uploads/")
     print("="*50 + "\n")
-    app.run(debug=True, host='0.0.0.0', port=5000, ssl_context=('cert.pem', 'key.pem'))
+    app.run(debug=True, host='0.0.0.0', port=5000)
