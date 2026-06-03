@@ -725,7 +725,7 @@ if __name__ == '__main__':
     
     print("\n" + "="*50)
     print("🚀 器材申请管理系统启动成功！")
-    print("📍 Flask 监听: 127.0.0.1:5000 (内部)")
+    print("📍 Flask 监听: 127.0.0.1:5050 (内部)")
     print("🌐 浏览器访问: https://<服务器IP>  (需先启动 Nginx)")
     print("📡 ESP32 访问: http://<服务器IP>/command")
     print("👤 管理员账号: admin / admin123")
