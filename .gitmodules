@@ -1,0 +1,3 @@
+[submodule "web/agent_yuntai"]
+	path = web/agent_yuntai
+	url = https://gitee.com/senlinjun/agent_yuntai.git

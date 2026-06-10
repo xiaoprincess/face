@@ -96,6 +96,22 @@
             border: 2px solid #667eea;
             color: #667eea;
         }
+
+        .btn-add-component {
+            width: 100%;
+            padding: 10px;
+            background: #f0f4ff;
+            border: 2px dashed #667eea;
+            border-radius: 10px;
+            color: #667eea;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .btn-add-component:hover {
+            background: #dce4ff;
+            border-color: #4a5fd5;
+        }
         
         /* 主容器 */
         .container {
@@ -650,8 +666,121 @@
                 {% endif %}
             </div>
         </div>
+
+        <!-- 器材柜子管理 -->
+        <div class="card">
+            <div class="card-header">
+                <h3>🗄️ 器材管理</h3>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <span class="status-badge" style="background: #667eea; color: white;">{{ cabinets|length }} 个柜子</span>
+                    <button class="btn btn-success" onclick="openCabinetCreateModal()">+ 新增柜子</button>
+                    <button class="btn btn-danger" id="batchDeleteBtn" onclick="batchDeleteCabinets()" disabled>批量删除</button>
+                </div>
+            </div>
+
+            <div class="table-container">
+                {% if cabinets %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 40px;">
+                                <input type="checkbox" id="selectAllCabinets" onchange="toggleSelectAllCabinets()">
+                            </th>
+                            <th>柜号</th>
+                            <th>器材</th>
+                            <th>元件</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for cab in cabinets %}
+                        <tr id="cabinet-row-{{ cab.id }}">
+                            <td>
+                                <input type="checkbox" class="cabinet-checkbox" value="{{ cab.id }}" onchange="updateBatchDeleteBtn()">
+                            </td>
+                            <td><strong>{{ cab.cabinet_number }}号柜</strong></td>
+                            <td>{{ cab.equipment_name }}</td>
+                            <td>
+                                {% if cab.components %}
+                                <span style="font-size: 13px;">{{ cab.components }}</span>
+                                {% else %}
+                                <span style="color: #999;">无元件</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="action-buttons">
+                                    <button class="btn btn-secondary" onclick="showCabinetDetail({{ cab.id }})">详情</button>
+                                    <button class="btn btn-success" onclick="openCabinetEditModal({{ cab.id }})">修改</button>
+                                    <form method="POST" action="/cabinet/delete/{{ cab.id }}" style="display: inline;" onsubmit="return confirm('确定要删除 {{ cab.cabinet_number }}号柜吗？');">
+                                        <button type="submit" class="btn btn-danger">删除</button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <div class="empty-state">
+                    <div class="icon">🗄️</div>
+                    <p>暂无器材柜子</p>
+                    <p style="font-size: 14px; margin-top: 10px;">点击"新增柜子"开始管理器材</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
     </div>
-    
+
+    <!-- 柜子新增/编辑模态框 -->
+    <div id="cabinetFormModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="cabinetFormTitle">🗄️ 新增柜子</h3>
+                <span class="close" onclick="closeCabinetFormModal()">&times;</span>
+            </div>
+            <form id="cabinetForm" method="POST" action="">
+                <input type="hidden" name="cabinet_id" id="cabinetEditId">
+                <div class="form-group">
+                    <label>柜号 *</label>
+                    <input type="text" name="cabinet_number" id="cabinetNumber" required placeholder="例如：0">
+                </div>
+                <div class="form-group">
+                    <label>器材名称 *</label>
+                    <input type="text" name="equipment_name" id="cabinetEquipmentName" required placeholder="例如：M3螺丝组">
+                </div>
+                <div class="form-group">
+                    <label>元件列表</label>
+                    <div id="componentList" style="margin-bottom: 10px;">
+                        <div class="component-row" style="display: flex; gap: 8px; margin-bottom: 8px;">
+                            <input type="text" name="components[]" placeholder="例如：M3螺丝" style="flex: 1;">
+                            <button type="button" class="btn btn-danger" onclick="removeComponent(this)" style="width: auto; padding: 8px 12px;">✕</button>
+                        </div>
+                    </div>
+                    <button type="button" class="btn-add-component" onclick="addComponentRow()">
+                        ＋ 添加元件
+                    </button>
+                </div>
+                <button type="submit" class="btn btn-success" style="width: 100%;">保存</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- 柜子详情模态框 -->
+    <div id="cabinetDetailModal" class="modal">
+        <div class="modal-content" style="max-width: 700px;">
+            <div class="modal-header">
+                <h3>🗄️ 柜子详情</h3>
+                <span class="close" onclick="closeCabinetDetailModal()">&times;</span>
+            </div>
+            <div id="cabinetDetailContent"></div>
+        </div>
+    </div>
+
+    <!-- 批量删除确认表单 -->
+    <form id="batchDeleteForm" method="POST" action="/cabinet/batch_delete" style="display: none;">
+        <div id="batchDeleteInputs"></div>
+    </form>
+
     <!-- 详情模态框 -->
     <div id="detailModal" class="modal">
         <div class="modal-content">
@@ -715,7 +844,8 @@
     <script>
         // 存储申请数据供详情查看
         const applicationsData = {{ applications_json | safe }};
-        
+        const cabinetsData = {{ cabinets_json | safe }};
+
         let currentAppId = null;
         
         function closeDetailModal() {
@@ -847,20 +977,191 @@
             return true;
         });
         
+        // ==================== 器材柜子管理 JS ====================
+
+        function openCabinetCreateModal() {
+            document.getElementById('cabinetFormTitle').textContent = '🗄️ 新增柜子';
+            document.getElementById('cabinetForm').action = '/cabinet/create';
+            document.getElementById('cabinetEditId').value = '';
+            document.getElementById('cabinetNumber').value = '';
+            document.getElementById('cabinetEquipmentName').value = '';
+            document.getElementById('componentList').innerHTML = `
+                <div class="component-row" style="display: flex; gap: 8px; margin-bottom: 8px;">
+                    <input type="text" name="components[]" placeholder="例如：M3螺丝" style="flex: 1;">
+                    <button type="button" class="btn btn-danger" onclick="removeComponent(this)" style="width: auto; padding: 8px 12px;">✕</button>
+                </div>
+            `;
+            document.getElementById('cabinetFormModal').style.display = 'flex';
+        }
+
+        function closeCabinetFormModal() {
+            document.getElementById('cabinetFormModal').style.display = 'none';
+        }
+
+        function openCabinetEditModal(cabinetId) {
+            const cab = cabinetsData.find(c => c.id == cabinetId);
+            if (!cab) return;
+
+            document.getElementById('cabinetFormTitle').textContent = '✏️ 修改柜子';
+            document.getElementById('cabinetForm').action = '/cabinet/edit/' + cabinetId;
+            document.getElementById('cabinetEditId').value = cabinetId;
+            document.getElementById('cabinetNumber').value = cab.cabinet_number;
+            document.getElementById('cabinetEquipmentName').value = cab.equipment_name;
+
+            // 填充元件
+            fetch('/api/cabinet/' + cabinetId)
+                .then(r => r.json())
+                .then(data => {
+                    let html = '';
+                    if (data.components && data.components.length > 0) {
+                        data.components.forEach(comp => {
+                            html += `
+                                <div class="component-row" style="display: flex; gap: 8px; margin-bottom: 8px;">
+                                    <input type="text" name="components[]" value="${comp.component_name}" style="flex: 1;">
+                                    <button type="button" class="btn btn-danger" onclick="removeComponent(this)" style="width: auto; padding: 8px 12px;">✕</button>
+                                </div>
+                            `;
+                        });
+                    } else {
+                        html = `
+                            <div class="component-row" style="display: flex; gap: 8px; margin-bottom: 8px;">
+                                <input type="text" name="components[]" placeholder="例如：M3螺丝" style="flex: 1;">
+                                <button type="button" class="btn btn-danger" onclick="removeComponent(this)" style="width: auto; padding: 8px 12px;">✕</button>
+                            </div>
+                        `;
+                    }
+                    document.getElementById('componentList').innerHTML = html;
+                });
+
+            document.getElementById('cabinetFormModal').style.display = 'flex';
+        }
+
+        function addComponentRow() {
+            const row = document.createElement('div');
+            row.className = 'component-row';
+            row.style.cssText = 'display: flex; gap: 8px; margin-bottom: 8px;';
+            row.innerHTML = `
+                <input type="text" name="components[]" placeholder="例如：M3螺母" style="flex: 1;">
+                <button type="button" class="btn btn-danger" onclick="removeComponent(this)" style="width: auto; padding: 8px 12px;">✕</button>
+            `;
+            document.getElementById('componentList').appendChild(row);
+        }
+
+        function removeComponent(btn) {
+            const rows = document.querySelectorAll('#componentList .component-row');
+            if (rows.length > 1) {
+                btn.closest('.component-row').remove();
+            }
+        }
+
+        function showCabinetDetail(cabinetId) {
+            fetch('/api/cabinet/' + cabinetId)
+                .then(r => r.json())
+                .then(data => {
+                    const cab = data.cabinet;
+                    const statusText = { 'pending': '待处理', 'approved': '已批准', 'rejected': '已拒绝' };
+
+                    let compsHtml = '';
+                    if (data.components && data.components.length > 0) {
+                        compsHtml = data.components.map(c => `<span style="background: #e8f0fe; color: #667eea; padding: 3px 10px; border-radius: 12px; margin: 2px; display: inline-block; font-size: 13px;">${c.component_name}</span>`).join(' ');
+                    } else {
+                        compsHtml = '<span style="color: #999;">无元件</span>';
+                    }
+
+                    let appsHtml = '';
+                    if (data.applications && data.applications.length > 0) {
+                        appsHtml = `
+                            <table style="margin-top: 10px;">
+                                <thead>
+                                    <tr>
+                                        <th>申请人</th>
+                                        <th>用途</th>
+                                        <th>状态</th>
+                                        <th>时间</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${data.applications.map(a => `
+                                        <tr>
+                                            <td>${a.username}</td>
+                                            <td>${a.purpose ? a.purpose.substring(0, 30) : '-'}</td>
+                                            <td><span class="status-badge status-${a.status}">${statusText[a.status] || a.status}</span></td>
+                                            <td>${a.created_at ? a.created_at.substring(0, 16) : '-'}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        `;
+                    } else {
+                        appsHtml = '<p style="color: #999; margin-top: 10px;">暂无申请记录</p>';
+                    }
+
+                    document.getElementById('cabinetDetailContent').innerHTML = `
+                        <div style="padding: 10px;">
+                            <p style="margin-bottom: 12px;"><strong>柜号：</strong>${cab.cabinet_number}号柜</p>
+                            <p style="margin-bottom: 12px;"><strong>器材：</strong>${cab.equipment_name}</p>
+                            <div style="margin-bottom: 12px;">
+                                <strong>元件：</strong>
+                                <div style="margin-top: 8px;">${compsHtml}</div>
+                            </div>
+                            <div style="margin-top: 20px;">
+                                <strong>申请记录：</strong>
+                                ${appsHtml}
+                            </div>
+                        </div>
+                    `;
+                    document.getElementById('cabinetDetailModal').style.display = 'flex';
+                });
+        }
+
+        function closeCabinetDetailModal() {
+            document.getElementById('cabinetDetailModal').style.display = 'none';
+        }
+
+        function toggleSelectAllCabinets() {
+            const selectAll = document.getElementById('selectAllCabinets');
+            document.querySelectorAll('.cabinet-checkbox').forEach(cb => {
+                cb.checked = selectAll.checked;
+            });
+            updateBatchDeleteBtn();
+        }
+
+        function updateBatchDeleteBtn() {
+            const checked = document.querySelectorAll('.cabinet-checkbox:checked').length;
+            document.getElementById('batchDeleteBtn').disabled = checked === 0;
+            document.getElementById('batchDeleteBtn').textContent = checked > 0 ? `批量删除 (${checked})` : '批量删除';
+        }
+
+        function batchDeleteCabinets() {
+            const checked = document.querySelectorAll('.cabinet-checkbox:checked');
+            if (checked.length === 0) return;
+            if (!confirm(`确定要删除选中的 ${checked.length} 个柜子吗？`)) return;
+
+            const form = document.getElementById('batchDeleteForm');
+            const container = document.getElementById('batchDeleteInputs');
+            container.innerHTML = '';
+            checked.forEach(cb => {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'ids[]';
+                input.value = cb.value;
+                container.appendChild(input);
+            });
+            form.submit();
+        }
+
         // 点击模态框外部关闭
         window.onclick = function(event) {
             const modal1 = document.getElementById('detailModal');
             const modal2 = document.getElementById('rejectModal');
             const modal3 = document.getElementById('addAdminModal');
-            if (event.target === modal1) {
-                modal1.style.display = 'none';
-            }
-            if (event.target === modal2) {
-                modal2.style.display = 'none';
-            }
-            if (event.target === modal3) {
-                modal3.style.display = 'none';
-            }
+            const modal4 = document.getElementById('cabinetFormModal');
+            const modal5 = document.getElementById('cabinetDetailModal');
+            if (event.target === modal1) modal1.style.display = 'none';
+            if (event.target === modal2) modal2.style.display = 'none';
+            if (event.target === modal3) modal3.style.display = 'none';
+            if (event.target === modal4) modal4.style.display = 'none';
+            if (event.target === modal5) modal5.style.display = 'none';
         }
     </script>
 </body>
