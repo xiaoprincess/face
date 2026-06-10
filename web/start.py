@@ -13,6 +13,50 @@ import urllib.parse
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here-change-in-production'
 
+# ==================== 云台初始化（树莓派环境） ====================
+import threading
+
+_pan_tilt_ready = False
+_picam2 = None
+_detector = None
+_camera_lock = threading.Lock()
+
+try:
+    from agent_yuntai.panTilt import lookAt
+    from picamera2 import Picamera2
+    import apriltag
+
+    _picam2 = Picamera2()
+    _picam2.configure(_picam2.create_preview_configuration(main={"size": (3280, 2464)}))
+    _detector = apriltag.apriltag("tag36h11", threads=4)
+    _pan_tilt_ready = True
+    print("✅ 云台模块已就绪")
+except Exception as e:
+    _pan_tilt_ready = False
+    print(f"⚠️ 云台模块不可用（非树莓派环境或缺少依赖）")
+
+
+def _pan_to_cabinet_sync(cabinet_id):
+    """同步执行云台指向（在独立线程中调用）"""
+    global _picam2
+    with _camera_lock:
+        try:
+            _picam2.start()
+            lookAt(cabinet_id, _picam2, _detector)
+        finally:
+            _picam2.stop()
+
+
+def pan_to_cabinet(cabinet_id):
+    """异步将云台指向 cabinet_id 对应的 AprilTag（用完即释放摄像头）"""
+    if _pan_tilt_ready:
+        threading.Thread(
+            target=_pan_to_cabinet_sync, args=(cabinet_id,),
+            daemon=True
+        ).start()
+        print(f"📷 云台指向 tag_id={cabinet_id}")
+
+
 # ==================== 百度AI人脸识别配置 ====================
 APP_ID = '123044418'
 API_KEY = 'VWtQmoKO44mDYdD3vGlXbi0I'
@@ -64,11 +108,36 @@ def init_db():
             expected_date DATE,
             status TEXT DEFAULT 'pending',
             reject_reason TEXT,
+            cabinet_id INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
     ''')
-    
+
+    # 迁移：旧数据库没有 cabinet_id 列时自动新增
+    try:
+        cursor.execute("ALTER TABLE applications ADD COLUMN cabinet_id INTEGER")
+    except:
+        pass
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS cabinets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cabinet_number TEXT NOT NULL,
+            equipment_name TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS cabinet_components (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cabinet_id INTEGER NOT NULL,
+            component_name TEXT NOT NULL,
+            FOREIGN KEY (cabinet_id) REFERENCES cabinets(id) ON DELETE CASCADE
+        )
+    ''')
+
     cursor.execute("SELECT * FROM users WHERE role = 'admin'")
     if not cursor.fetchone():
         admin_password = hashlib.sha256('admin123'.encode()).hexdigest()
@@ -102,6 +171,32 @@ def save_uploaded_files(files):
         else:
             saved_files.append('')
     return saved_files
+
+
+def match_cabinet(equipment_name):
+    """关键词匹配柜子：双向子串匹配，返回匹配的 cabinet dict 或 None"""
+    if not equipment_name:
+        return None
+
+    conn = get_db()
+    cabinets = conn.execute(
+        'SELECT id, cabinet_number, equipment_name FROM cabinets'
+    ).fetchall()
+    conn.close()
+
+    name_lower = equipment_name.strip().lower()
+    best_match = None
+    best_len = 0
+
+    for cab in cabinets:
+        cab_name = cab['equipment_name'].strip().lower()
+        if name_lower in cab_name or cab_name in name_lower:
+            match_len = min(len(name_lower), len(cab_name))
+            if match_len > best_len:
+                best_match = dict(cab)
+                best_len = match_len
+
+    return best_match
 
 @app.route('/')
 def index():
@@ -221,14 +316,25 @@ def user_panel():
     pending_count = sum(1 for app in applications if app['status'] == 'pending')
     approved_count = sum(1 for app in applications if app['status'] == 'approved')
     rejected_count = sum(1 for app in applications if app['status'] == 'rejected')
-    
+
+    cabinets = conn.execute('''
+        SELECT c.*, GROUP_CONCAT(cc.component_name, ', ') as components
+        FROM cabinets c
+        LEFT JOIN cabinet_components cc ON c.id = cc.cabinet_id
+        GROUP BY c.id
+        ORDER BY c.cabinet_number
+    ''').fetchall()
+
     conn.close()
-    
+
     applications_list = [dict(app) for app in applications]
-    
+    cabinets_list = [dict(c) for c in cabinets]
+
     return render_template('user.html',
                          applications=applications,
                          applications_json=json.dumps(applications_list),
+                         cabinets=cabinets,
+                         cabinets_json=json.dumps(cabinets_list),
                          pending_count=pending_count,
                          approved_count=approved_count,
                          rejected_count=rejected_count,
@@ -271,14 +377,25 @@ def admin_panel():
         GROUP BY u.id
         ORDER BY u.created_at DESC
     ''').fetchall()
-    
+
+    cabinets = conn.execute('''
+        SELECT c.*, GROUP_CONCAT(cc.component_name, ', ') as components
+        FROM cabinets c
+        LEFT JOIN cabinet_components cc ON c.id = cc.cabinet_id
+        GROUP BY c.id
+        ORDER BY c.cabinet_number
+    ''').fetchall()
+
     conn.close()
-    
+
     applications_list = [dict(app) for app in applications]
-    
+    cabinets_list = [dict(c) for c in cabinets]
+
     return render_template('admin.html',
                          applications=applications,
                          applications_json=json.dumps(applications_list),
+                         cabinets=cabinets,
+                         cabinets_json=json.dumps(cabinets_list),
                          pending_count=pending_count,
                          approved_count=approved_count,
                          rejected_count=rejected_count,
@@ -312,6 +429,9 @@ def apply_equipment():
     photos_str = '|||'.join(saved_photos)
     
     purpose = request.form.get('purpose', '').strip()
+    cabinet_id = request.form.get('cabinet_id', '').strip()
+    if not cabinet_id:
+        cabinet_id = None
     expected_date = request.form.get('expected_date', '')
     
     if not purpose:
@@ -320,9 +440,9 @@ def apply_equipment():
     conn = get_db()
     conn.execute('''
         INSERT INTO applications 
-        (user_id, equipment_name, quantity, photos, purpose, expected_date) 
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (session['user_id'], equipment_name_str, quantity_str, photos_str, purpose, expected_date))
+        (user_id, equipment_name, quantity, photos, purpose, expected_date, cabinet_id) 
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (session['user_id'], equipment_name_str, quantity_str, photos_str, purpose, expected_date, cabinet_id))
     conn.commit()
     conn.close()
     
@@ -610,10 +730,20 @@ def api_face_verify():
             (user_id, equipment_name, quantity, purpose, status) 
             VALUES (?, ?, ?, ?, ?)
         ''', (user_id, equipment_name, '1', purpose, 'pending'))
-        conn.commit()
         app_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+        # 关键词匹配柜子
+        cabinet = match_cabinet(equipment_name)
+        if cabinet:
+            conn.execute(
+                'UPDATE applications SET cabinet_id = ? WHERE id = ?',
+                (cabinet['id'], app_id)
+            )
+            print(f"🗄️ 自动匹配柜子: {cabinet['cabinet_number']}号柜 - {cabinet['equipment_name']}")
+            pan_to_cabinet(cabinet['id'])
+
+        conn.commit()
         conn.close()
-        
         print(f"✅ 人脸验证: {user['username']} (分数:{score:.1f})")
         print(f"✅ 已创建申请: {equipment_name} (ID: #{app_id})")
         
@@ -675,10 +805,20 @@ def api_face_apply():
             VALUES (?, ?, ?, ?, ?)
         ''', (user_id, equipment_name, str(quantity), purpose, 'pending'))
         
-        conn.commit()
         app_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+        # 关键词匹配柜子
+        cabinet = match_cabinet(equipment_name)
+        if cabinet:
+            conn.execute(
+                'UPDATE applications SET cabinet_id = ? WHERE id = ?',
+                (cabinet['id'], app_id)
+            )
+            print(f"🗄️ 自动匹配柜子: {cabinet['cabinet_number']}号柜 - {cabinet['equipment_name']}")
+            pan_to_cabinet(cabinet['id'])
+
+        conn.commit()
         conn.close()
-        
         print(f"✅ 已为 {user['username']} 自动创建器材申请 (ID: #{app_id})")
         print(f"   器材: {equipment_name} x {quantity}")
         print("="*60 + "\n")
@@ -715,6 +855,144 @@ def delete_user(user_id):
     conn.close()
     
     return redirect(url_for('admin_panel'))
+
+# ==================== 器材柜子管理 ====================
+
+@app.route('/api/cabinets')
+def api_cabinets():
+    """返回所有柜子列表（供下拉框使用）"""
+    conn = get_db()
+    cabinets = conn.execute('''
+        SELECT c.*, GROUP_CONCAT(cc.component_name, ', ') as components
+        FROM cabinets c
+        LEFT JOIN cabinet_components cc ON c.id = cc.cabinet_id
+        GROUP BY c.id
+        ORDER BY c.cabinet_number
+    ''').fetchall()
+    conn.close()
+    return jsonify([dict(c) for c in cabinets])
+
+@app.route('/api/cabinet/<int:cabinet_id>')
+def api_cabinet_detail(cabinet_id):
+    """返回柜子详情：信息 + 元件 + 关联申请记录"""
+    conn = get_db()
+    cabinet = conn.execute('SELECT * FROM cabinets WHERE id = ?', (cabinet_id,)).fetchone()
+    if not cabinet:
+        conn.close()
+        return jsonify({'success': False, 'message': '柜子不存在'})
+
+    components = conn.execute(
+        'SELECT * FROM cabinet_components WHERE cabinet_id = ?', (cabinet_id,)
+    ).fetchall()
+
+    applications = conn.execute('''
+        SELECT a.*, u.username
+        FROM applications a
+        JOIN users u ON a.user_id = u.id
+        WHERE a.cabinet_id = ?
+        ORDER BY a.created_at DESC
+    ''', (cabinet_id,)).fetchall()
+
+    conn.close()
+    return jsonify({
+        'cabinet': dict(cabinet),
+        'components': [dict(c) for c in components],
+        'applications': [dict(a) for a in applications]
+    })
+
+@app.route('/cabinet/create', methods=['POST'])
+def cabinet_create():
+    """创建柜子"""
+    if 'user_id' not in session or session.get('role') != 'admin':
+        return redirect(url_for('login_page'))
+
+    cabinet_number = request.form.get('cabinet_number', '').strip()
+    equipment_name = request.form.get('equipment_name', '').strip()
+    components = request.form.getlist('components[]')
+
+    if not cabinet_number or not equipment_name:
+        return redirect(url_for('admin_panel'))
+
+    conn = get_db()
+    conn.execute(
+        'INSERT INTO cabinets (cabinet_number, equipment_name) VALUES (?, ?)',
+        (cabinet_number, equipment_name)
+    )
+    cabinet_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+    for comp in components:
+        comp = comp.strip()
+        if comp:
+            conn.execute(
+                'INSERT INTO cabinet_components (cabinet_id, component_name) VALUES (?, ?)',
+                (cabinet_id, comp)
+            )
+
+    conn.commit()
+    conn.close()
+    return redirect(url_for('admin_panel'))
+
+@app.route('/cabinet/edit/<int:cabinet_id>', methods=['POST'])
+def cabinet_edit(cabinet_id):
+    """修改柜子"""
+    if 'user_id' not in session or session.get('role') != 'admin':
+        return redirect(url_for('login_page'))
+
+    cabinet_number = request.form.get('cabinet_number', '').strip()
+    equipment_name = request.form.get('equipment_name', '').strip()
+    components = request.form.getlist('components[]')
+
+    if not cabinet_number or not equipment_name:
+        return redirect(url_for('admin_panel'))
+
+    conn = get_db()
+    conn.execute(
+        'UPDATE cabinets SET cabinet_number = ?, equipment_name = ? WHERE id = ?',
+        (cabinet_number, equipment_name, cabinet_id)
+    )
+    conn.execute('DELETE FROM cabinet_components WHERE cabinet_id = ?', (cabinet_id,))
+
+    for comp in components:
+        comp = comp.strip()
+        if comp:
+            conn.execute(
+                'INSERT INTO cabinet_components (cabinet_id, component_name) VALUES (?, ?)',
+                (cabinet_id, comp)
+            )
+
+    conn.commit()
+    conn.close()
+    return redirect(url_for('admin_panel'))
+
+@app.route('/cabinet/delete/<int:cabinet_id>', methods=['POST'])
+def cabinet_delete(cabinet_id):
+    """删除单个柜子"""
+    if 'user_id' not in session or session.get('role') != 'admin':
+        return redirect(url_for('login_page'))
+
+    conn = get_db()
+    conn.execute('DELETE FROM cabinet_components WHERE cabinet_id = ?', (cabinet_id,))
+    conn.execute('DELETE FROM cabinets WHERE id = ?', (cabinet_id,))
+    conn.commit()
+    conn.close()
+    return redirect(url_for('admin_panel'))
+
+@app.route('/cabinet/batch_delete', methods=['POST'])
+def cabinet_batch_delete():
+    """批量删除柜子"""
+    if 'user_id' not in session or session.get('role') != 'admin':
+        return redirect(url_for('login_page'))
+
+    ids = request.form.getlist('ids[]')
+    if ids:
+        conn = get_db()
+        for cid in ids:
+            conn.execute('DELETE FROM cabinet_components WHERE cabinet_id = ?', (cid,))
+            conn.execute('DELETE FROM cabinets WHERE id = ?', (cid,))
+        conn.commit()
+        conn.close()
+    return redirect(url_for('admin_panel'))
+
 if __name__ == '__main__':
     if not os.path.exists('templates'):
         os.makedirs('templates')
