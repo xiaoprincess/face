@@ -6,6 +6,7 @@ import sqlite3
 import hashlib
 import os
 import json
+import time
 from datetime import datetime
 from werkzeug.utils import secure_filename
 import urllib.parse
@@ -22,7 +23,7 @@ _detector = None
 _camera_lock = threading.Lock()
 
 try:
-    from agent_yuntai.panTilt import lookAt
+    from agent_yuntai.panTilt import lookAt, turnLED
     from picamera2 import Picamera2
     import apriltag
 
@@ -35,14 +36,21 @@ except Exception as e:
     _pan_tilt_ready = False
     print(f"⚠️ 云台模块不可用（非树莓派环境或缺少依赖）")
 
+_laser_delay_seconds = 3.0  # 激光持续亮灯秒数，后台可调
+
 
 def _pan_to_cabinet_sync(cabinet_id):
     """同步执行云台指向（在独立线程中调用）"""
-    global _picam2
     with _camera_lock:
         try:
             _picam2.start()
-            lookAt(cabinet_id, _picam2, _detector)
+            turnLED(True)                                        # 开激光
+            lookAt(cabinet_id, _picam2, _detector)              # 阻塞，直到对准
+            time.sleep(_laser_delay_seconds)                    # 对准后持续亮灯
+            turnLED(False)                                       # 关激光
+        except Exception:
+            turnLED(False)                                       # 异常也要关
+            raise
         finally:
             _picam2.stop()
 
@@ -57,7 +65,17 @@ def pan_to_cabinet(cabinet_id):
         print(f"📷 云台指向 tag_id={cabinet_id}")
 
 
-# ==================== 百度AI人脸识别配置 ====================
+@app.route('/api/laser_delay', methods=['GET', 'POST'])
+def api_laser_delay():
+    """获取或设置激光延时（秒）"""
+    global _laser_delay_seconds
+    if 'user_id' not in session or session.get('role') != 'admin':
+        return jsonify({'error': 'unauthorized'}), 403
+    if request.method == 'GET':
+        return jsonify({'delay': _laser_delay_seconds})
+    _laser_delay_seconds = float(request.form.get('delay', 3.0))
+    print(f"⚙️ 激光延时已更新为 {_laser_delay_seconds} 秒")
+    return redirect(url_for('admin_panel'))
 APP_ID = '123044418'
 API_KEY = 'VWtQmoKO44mDYdD3vGlXbi0I'
 SECRET_KEY = 'BsnaarSH1Bv5TfC8nWDTLYtKTln70whR'

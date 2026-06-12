@@ -675,6 +675,12 @@
                     <span class="status-badge" style="background: #667eea; color: white;">{{ cabinets|length }} 个柜子</span>
                     <button class="btn btn-success" onclick="openCabinetCreateModal()">+ 新增柜子</button>
                     <button class="btn btn-danger" id="batchDeleteBtn" onclick="batchDeleteCabinets()" disabled>批量删除</button>
+                    <span style="margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 14px; color: #666;">
+                        🔴 激光延时
+                        <input type="number" id="laserDelay" step="0.5" min="0.5" value="3.0" style="width: 60px; padding: 4px 8px; border: 2px solid #e0e0e0; border-radius: 6px; font-size: 14px;">
+                        秒
+                        <button type="button" class="btn btn-secondary" style="padding: 4px 12px; font-size: 13px;" onclick="saveLaserDelay()">保存</button>
+                    </span>
                 </div>
             </div>
 
@@ -1162,6 +1168,30 @@
             if (event.target === modal3) modal3.style.display = 'none';
             if (event.target === modal4) modal4.style.display = 'none';
             if (event.target === modal5) modal5.style.display = 'none';
+        }
+
+        // 激光延时配置
+        fetch('/api/laser_delay')
+            .then(r => r.json())
+            .then(data => {
+                if (data.delay !== undefined) {
+                    document.getElementById('laserDelay').value = data.delay;
+                }
+            })
+            .catch(() => {});
+
+        function saveLaserDelay() {
+            const delay = document.getElementById('laserDelay').value;
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = '/api/laser_delay';
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'delay';
+            input.value = delay;
+            form.appendChild(input);
+            document.body.appendChild(form);
+            form.submit();
         }
     </script>
 </body>
