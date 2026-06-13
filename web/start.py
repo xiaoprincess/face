@@ -1,4 +1,8 @@
-#source /home/xiao/face/face_env/bin/activate
+# python3 -m venv venv 先开虚拟环境
+# pip install flask flask-cors baidu-aip chardet requests urllib3 -i 
+# https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host pypi.tuna.tsinghua.edu.cn
+# 前置库安装
+# source source venv/bin/activate
 from flask import Flask, render_template, request, redirect, url_for, session, send_from_directory, jsonify
 from aip import AipFace
 import base64
