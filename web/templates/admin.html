@@ -1018,7 +1018,7 @@
             document.getElementById('cabinetNumber').value = cab.cabinet_number;
             document.getElementById('cabinetEquipmentName').value = cab.equipment_name;
 
-            // 填充元件
+            // 加载完元件后再显示弹窗
             fetch('/api/cabinet/' + cabinetId)
                 .then(r => r.json())
                 .then(data => {
@@ -1041,9 +1041,8 @@
                         `;
                     }
                     document.getElementById('componentList').innerHTML = html;
+                    document.getElementById('cabinetFormModal').style.display = 'flex';
                 });
-
-            document.getElementById('cabinetFormModal').style.display = 'flex';
         }
 
         function addComponentRow() {
