@@ -572,170 +572,127 @@ def cancel_application(app_id):
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
-# ==================== 接收ESP32指令 ====================
-# ==================== 接收ESP32指令 ====================
+# ==================== ESP32 ====================
+
+try:
+    from face import capture_photo as face_capture
+except Exception:
+    face_capture = None
+
+
+def _esp32_request_thread(equipment_name):
+    global _detector
+    picam2 = None
+    try:
+        with _hardware_lock:
+            _turn_to_face()
+            if _pan_tilt_ready and face_capture:
+                picam2 = picamera2.Picamera2()
+                picam2.configure(picam2.create_still_configuration(
+                    main={"size": (640, 480), "format": "RGB888"}
+                ))
+                picam2.start()
+                time.sleep(0.5)
+                image = face_capture(picam2)
+                picam2.stop()
+            else:
+                print("Camera not available")
+                return
+
+        result = face_client.search(
+            image=image, image_type='BASE64', group_id_list=GROUP_ID
+        )
+        if result.get('error_code') != 0:
+            print(f"Face search failed: {result.get('error_msg')}")
+            return
+
+        user_list = result.get('result', {}).get('user_list', [])
+        if not user_list:
+            print("No matching face found")
+            return
+
+        top_user = user_list[0]
+        score = float(top_user.get('score', 0))
+        user_id = top_user.get('user_id', '')
+        if score < 70:
+            print(f"Score too low ({score:.1f})")
+            return
+
+        conn = get_db()
+        user = conn.execute('SELECT * FROM users WHERE id = ?', (int(user_id),)).fetchone()
+        if not user:
+            conn.close()
+            print("User not found")
+            return
+
+        purpose = f"[Auto] Score: {score:.1f}"
+        conn.execute(
+            "INSERT INTO applications"
+            " (user_id, equipment_name, quantity, purpose, status)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (user_id, equipment_name, '1', purpose, 'pending')
+        )
+        app_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+        cabinet = match_cabinet(equipment_name)
+        if cabinet:
+            conn.execute(
+                'UPDATE applications SET cabinet_id = ? WHERE id = ?',
+                (cabinet['id'], app_id)
+            )
+        conn.commit()
+        conn.close()
+
+        print(f"Face OK: {user['username']} (score:{score:.1f})")
+        print(f"App created: {equipment_name} (ID: #{app_id})")
+
+        with _hardware_lock:
+            _turn_back_from_face()
+            if cabinet and _pan_tilt_ready:
+                if _detector is None:
+                    _detector = apriltag.apriltag("tag36h11", threads=4)
+                picam2.configure(picam2.create_preview_configuration(main={"size": (3280, 2464)}))
+                picam2.start()
+                try:
+                    turnLED(True)
+                    print(f"PanTilt to tag_id={cabinet['id']}")
+                    lookAt(cabinet['id'], picam2, _detector)
+                    time.sleep(_laser_delay_seconds)
+                    turnLED(False)
+                except Exception:
+                    turnLED(False)
+                    raise
+                finally:
+                    picam2.stop()
+
+    except Exception as e:
+        print(f"ESP32 request error: {e}")
+    finally:
+        if picam2:
+            try:
+                picam2.stop()
+            except Exception:
+                pass
+
+
 @app.route('/command', methods=['GET'])
 def receive_command():
-    """接收ESP32发来的器材名称，触发人脸验证"""
-    try:
-        client_ip = request.remote_addr
-        receive_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        equipment_name = request.args.get('cmd', '')
-        equipment_name = urllib.parse.unquote(equipment_name)
-        
-        if not equipment_name:
-            return "ERROR: Empty command", 400
-        
-        print("\n" + "="*60)
-        print(f"📨 收到来自 {client_ip} 的申请")
-        print(f"⏰ 接收时间: {receive_time}")
-        print(f"📝 器材名称: {equipment_name}")
-        print(f"🔍 请进行人脸验证...")
-        print("="*60 + "\n")
-        
-
-        # 调用face.py进行人脸验证
-        import subprocess
-        face_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'face.py')
-        subprocess.Popen(['python3', face_script, equipment_name])
-        
-        return f"OK, face verification started for: {equipment_name}", 200
-        
-    except Exception as e:
-        print(f"❌ 处理指令错误: {e}")
-        return f"ERROR: {str(e)}", 500
-
-# ==================== 人脸识别API路由 ====================
-@app.route('/api/face_register', methods=['POST'])
-def api_face_register():
-    """人脸注册"""
-    try:
-        data = request.get_json()
-        user_id = str(session.get('user_id', ''))
-        image_base64 = data.get('image', '')
-        
-        if not user_id:
-            return jsonify({'success': False, 'message': '请先登录'})
-        if not image_base64:
-            return jsonify({'success': False, 'message': '请提供人脸照片'})
-        
-        if 'base64,' in image_base64:
-            image_base64 = image_base64.split('base64,')[1]
-        
-        result = face_client.addUser(
-            image=image_base64,
-            image_type='BASE64',
-            group_id=GROUP_ID,
-            user_id=user_id,
-            user_info=session.get('username', '')
-        )
-        
-        print(f"人脸注册结果: {result}")
-        
-        if result.get('error_code') == 0:
-            return jsonify({'success': True, 'message': '人脸注册成功'})
-        else:
-            return jsonify({'success': False, 'message': result.get('error_msg', '注册失败')})
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)})
-
-
-@app.route('/api/face_login', methods=['POST'])
-def api_face_login():
-    """人脸登录"""
-    try:
-        data = request.get_json()
-        image_base64 = data.get('image', '')
-        
-        if not image_base64:
-            return jsonify({'success': False, 'message': '请提供人脸照片'})
-        
-        if 'base64,' in image_base64:
-            image_base64 = image_base64.split('base64,')[1]
-        
-        result = face_client.search(
-            image=image_base64,
-            image_type='BASE64',
-            group_id_list=GROUP_ID,
-        )
-        
-        print(f"人脸搜索结果: {result}")
-        
-        if result.get('error_code') == 0:
-            user_list = result.get('result', {}).get('user_list', [])
-            if user_list and len(user_list) > 0:
-                top_user = user_list[0]
-                score = float(top_user.get('score', 0))  # 强制转换为浮点数
-                user_id = top_user.get('user_id', '')
-                
-                if score > 70:
-                    conn = get_db()
-                    user = conn.execute('SELECT * FROM users WHERE id = ?', (int(user_id),)).fetchone()
-                    conn.close()
-                    
-                    if user:
-                        session['user_id'] = user['id']
-                        session['username'] = user['username']
-                        session['role'] = user['role']
-                        
-                        redirect_url = '/admin' if user['role'] == 'admin' else '/user'
-                        return jsonify({
-                            'success': True,
-                            'message': f'欢迎 {user["username"]}',
-                            'redirect': redirect_url
-                        })
-                
-                return jsonify({'success': False, 'message': f'置信度过低({score:.1f})'})
-            return jsonify({'success': False, 'message': '未找到匹配用户'})
-        else:
-            return jsonify({'success': False, 'message': result.get('error_msg', '识别失败')})
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)})
-    
-@app.route('/make_admin/<int:user_id>', methods=['POST'])
-def make_admin(user_id):
-    """将普通用户设为管理员"""
-    if 'user_id' not in session or session.get('role') != 'admin':
-        return redirect(url_for('login_page'))
-    conn = get_db()
-    conn.execute(
-           "UPDATE users SET role = 'admin' WHERE id = ? AND role = 'user'",
-            (user_id,)
-        )
-    conn.commit()
-    conn.close()
-    return redirect(url_for('admin_panel'))
-
-@app.route('/remove_admin/<int:user_id>', methods=['POST'])
-def remove_admin(user_id):
-    """移除管理员权限（降为普通用户）"""
-    if 'user_id' not in session or session.get('role') != 'admin':
-        return redirect(url_for('login_page'))
-    
-    # 不能移除自己的管理员权限
-    if user_id == session['user_id']:
-        return redirect(url_for('admin_panel'))
-    
-    conn = get_db()
-    
-    # 检查是否还有其他管理员
-    admin_count = conn.execute(
-        "SELECT COUNT(*) FROM users WHERE role = 'admin'"
-    ).fetchone()[0]
-    
-    if admin_count <= 1:
-        conn.close()
-        return redirect(url_for('admin_panel'))
-    
-    conn.execute(
-        "UPDATE users SET role = 'user' WHERE id = ? AND role = 'admin'",
-        (user_id,)
-    )
-    conn.commit()
-    conn.close()
-    
-    return redirect(url_for('admin_panel'))
-# ==================== 接收ESP32人脸识别结果 ====================
+    equipment_name = request.args.get('cmd', '')
+    equipment_name = urllib.parse.unquote(equipment_name)
+    if not equipment_name:
+        return "ERROR: Empty command", 400
+    client_ip = request.remote_addr
+    receive_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    print("\n" + "="*60)
+    print(f"ESP32 request from {client_ip}")
+    print(f"Time: {receive_time}")
+    print(f"Equipment: {equipment_name}")
+    print("="*60 + "\n")
+    threading.Thread(
+        target=_esp32_request_thread, args=(equipment_name,),
+        daemon=True
+    ).start()
+    return f"OK: {equipment_name}", 200
 
 @app.route('/api/face_verify', methods=['POST'])
 def api_face_verify():
