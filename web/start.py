@@ -28,12 +28,19 @@ _hardware_lock = threading.Lock()
 
 try:
     from agent_yuntai.panTilt import lookAt, turnLED, x_motor, y_motor
+    from face import capture_photo as face_capture
     import picamera2
     import apriltag
+
+    _picam2 = picamera2.Picamera2()
+    _detector = apriltag.apriltag("tag36h11", threads=4)
     _pan_tilt_ready = True
-    print("✅ 云台模块已就绪（相机延迟初始化）")
+    print("✅ 云台模块已就绪")
 except Exception as e:
     _pan_tilt_ready = False
+    _picam2 = None
+    _detector = None
+    face_capture = None
     print(f"⚠️ 云台模块不可用（非树莓派环境或缺少依赖）{e}")
 
 _laser_delay_seconds = 3.0   # 激光持续亮灯秒数，后台可调
@@ -61,21 +68,16 @@ def _turn_back_from_face():
 
 def _pan_to_cabinet_sync(cabinet_id):
     """同步执行云台指向（在独立线程中调用）"""
-    global _picam2, _detector
     with _hardware_lock:
         try:
-            if _picam2 is None:
-                _picam2 = picamera2.Picamera2()
-                _picam2.configure(_picam2.create_preview_configuration(main={"size": (3280, 2464)}))
-                _detector = apriltag.apriltag("tag36h11", threads=4)
-                print("📷 相机首次初始化完成")
+            _picam2.configure(_picam2.create_preview_configuration(main={"size": (3280, 2464)}))
             _picam2.start()
-            turnLED(True)                                        # 开激光
-            lookAt(cabinet_id, _picam2, _detector)              # 阻塞，直到对准
-            time.sleep(_laser_delay_seconds)                    # 对准后持续亮灯
-            turnLED(False)                                       # 关激光
+            turnLED(True)
+            lookAt(cabinet_id, _picam2, _detector)
+            time.sleep(_laser_delay_seconds)
+            turnLED(False)
         except Exception:
-            turnLED(False)                                       # 异常也要关
+            turnLED(False)
             raise
         finally:
             _picam2.stop()
@@ -574,27 +576,19 @@ def uploaded_file(filename):
 
 # ==================== ESP32 ====================
 
-try:
-    from face import capture_photo as face_capture
-except Exception:
-    face_capture = None
-
 
 def _esp32_request_thread(equipment_name):
-    global _detector
-    picam2 = None
     try:
         with _hardware_lock:
             _turn_to_face()
             if _pan_tilt_ready and face_capture:
-                picam2 = picamera2.Picamera2()
-                picam2.configure(picam2.create_still_configuration(
+                _picam2.configure(_picam2.create_still_configuration(
                     main={"size": (640, 480), "format": "RGB888"}
                 ))
-                picam2.start()
+                _picam2.start()
                 time.sleep(0.5)
-                image = face_capture(picam2)
-                picam2.stop()
+                image = face_capture(_picam2)
+                _picam2.stop()
             else:
                 print("Camera not available")
                 return
@@ -649,30 +643,22 @@ def _esp32_request_thread(equipment_name):
         with _hardware_lock:
             _turn_back_from_face()
             if cabinet and _pan_tilt_ready:
-                if _detector is None:
-                    _detector = apriltag.apriltag("tag36h11", threads=4)
-                picam2.configure(picam2.create_preview_configuration(main={"size": (3280, 2464)}))
-                picam2.start()
+                _picam2.configure(_picam2.create_preview_configuration(main={"size": (3280, 2464)}))
+                _picam2.start()
                 try:
                     turnLED(True)
                     print(f"PanTilt to tag_id={cabinet['id']}")
-                    lookAt(cabinet['id'], picam2, _detector)
+                    lookAt(cabinet['id'], _picam2, _detector)
                     time.sleep(_laser_delay_seconds)
                     turnLED(False)
                 except Exception:
                     turnLED(False)
                     raise
                 finally:
-                    picam2.stop()
+                    _picam2.stop()
 
     except Exception as e:
         print(f"ESP32 request error: {e}")
-    finally:
-        if picam2:
-            try:
-                picam2.stop()
-            except Exception:
-                pass
 
 
 @app.route('/command', methods=['GET'])
