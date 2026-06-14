@@ -24,29 +24,51 @@ import threading
 _pan_tilt_ready = False
 _picam2 = None
 _detector = None
-_camera_lock = threading.Lock()
+_hardware_lock = threading.Lock()
 
 try:
-    from agent_yuntai.panTilt import lookAt, turnLED
-    from picamera2 import Picamera2
+    from agent_yuntai.panTilt import lookAt, turnLED, x_motor, y_motor
+    import picamera2
     import apriltag
-
-    _picam2 = Picamera2()
-    _picam2.configure(_picam2.create_preview_configuration(main={"size": (3280, 2464)}))
-    _detector = apriltag.apriltag("tag36h11", threads=4)
     _pan_tilt_ready = True
-    print("✅ 云台模块已就绪")
+    print("✅ 云台模块已就绪（相机延迟初始化）")
 except Exception as e:
     _pan_tilt_ready = False
     print(f"⚠️ 云台模块不可用（非树莓派环境或缺少依赖）")
 
-_laser_delay_seconds = 3.0  # 激光持续亮灯秒数，后台可调
+_laser_delay_seconds = 3.0   # 激光持续亮灯秒数，后台可调
+_face_pan_angle = 0.0         # 人脸识别水平转角（度）
+_face_tilt_angle = 0.0        # 人脸识别垂直转角（度）
+
+
+def _turn_to_face():
+    """云台转到人脸识别位置（调用线程阻塞，~ms级）"""
+    if _pan_tilt_ready and (_face_pan_angle != 0 or _face_tilt_angle != 0):
+        with _hardware_lock:
+            x_motor.turnAngle(abs(_face_pan_angle), 1 if _face_pan_angle < 0 else 0)
+            y_motor.turnAngle(abs(_face_tilt_angle), 1 if _face_tilt_angle < 0 else 0)
+        print(f"🔄 云台转到人脸位置 pan={_face_pan_angle}° tilt={_face_tilt_angle}°")
+
+
+def _turn_back_from_face():
+    """从人脸位置转回原位"""
+    if _pan_tilt_ready and (_face_pan_angle != 0 or _face_tilt_angle != 0):
+        with _hardware_lock:
+            x_motor.turnAngle(abs(_face_pan_angle), 0 if _face_pan_angle < 0 else 1)
+            y_motor.turnAngle(abs(_face_tilt_angle), 0 if _face_tilt_angle < 0 else 1)
+        print("↩️ 云台转回原位")
 
 
 def _pan_to_cabinet_sync(cabinet_id):
     """同步执行云台指向（在独立线程中调用）"""
-    with _camera_lock:
+    global _picam2, _detector
+    with _hardware_lock:
         try:
+            if _picam2 is None:
+                _picam2 = picamera2.Picamera2()
+                _picam2.configure(_picam2.create_preview_configuration(main={"size": (3280, 2464)}))
+                _detector = apriltag.apriltag("tag36h11", threads=4)
+                print("📷 相机首次初始化完成")
             _picam2.start()
             turnLED(True)                                        # 开激光
             lookAt(cabinet_id, _picam2, _detector)              # 阻塞，直到对准
@@ -79,6 +101,20 @@ def api_laser_delay():
         return jsonify({'delay': _laser_delay_seconds})
     _laser_delay_seconds = float(request.form.get('delay', 3.0))
     print(f"⚙️ 激光延时已更新为 {_laser_delay_seconds} 秒")
+    return redirect(url_for('admin_panel'))
+
+
+@app.route('/api/face_angles', methods=['GET', 'POST'])
+def api_face_angles():
+    """获取或设置人脸识别云台角度"""
+    global _face_pan_angle, _face_tilt_angle
+    if 'user_id' not in session or session.get('role') != 'admin':
+        return jsonify({'error': 'unauthorized'}), 403
+    if request.method == 'GET':
+        return jsonify({'pan': _face_pan_angle, 'tilt': _face_tilt_angle})
+    _face_pan_angle = float(request.form.get('pan', 0))
+    _face_tilt_angle = float(request.form.get('tilt', 0))
+    print(f"⚙️ 人脸角度已更新 pan={_face_pan_angle}° tilt={_face_tilt_angle}°")
     return redirect(url_for('admin_panel'))
 APP_ID = '123044418'
 API_KEY = 'VWtQmoKO44mDYdD3vGlXbi0I'
@@ -557,6 +593,9 @@ def receive_command():
         print(f"🔍 请进行人脸验证...")
         print("="*60 + "\n")
         
+        # 云台转到人脸识别位置
+        _turn_to_face()
+
         # 调用face.py进行人脸验证
         import subprocess
         face_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'face.py')
@@ -762,6 +801,9 @@ def api_face_verify():
                 (cabinet['id'], app_id)
             )
             print(f"🗄️ 自动匹配柜子: {cabinet['cabinet_number']}号柜 - {cabinet['equipment_name']}")
+            # 转回原位
+            _turn_back_from_face()
+
             pan_to_cabinet(cabinet['id'])
 
         conn.commit()

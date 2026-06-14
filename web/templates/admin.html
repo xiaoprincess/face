@@ -680,6 +680,10 @@
                         <input type="number" id="laserDelay" step="0.5" min="0.5" value="3.0" style="width: 60px; padding: 4px 8px; border: 2px solid #e0e0e0; border-radius: 6px; font-size: 14px;">
                         秒
                         <button type="button" class="btn btn-secondary" style="padding: 4px 12px; font-size: 13px;" onclick="saveLaserDelay()">保存</button>
+                        <span style="margin-left: 12px;">😷 人脸角度</span>
+                        Pan <input type="number" id="facePanAngle" step="0.5" value="0" style="width: 60px; padding: 4px 8px; border: 2px solid #e0e0e0; border-radius: 6px; font-size: 14px;">°
+                        Tilt <input type="number" id="faceTiltAngle" step="0.5" value="0" style="width: 60px; padding: 4px 8px; border: 2px solid #e0e0e0; border-radius: 6px; font-size: 14px;">°
+                        <button type="button" class="btn btn-secondary" style="padding: 4px 12px; font-size: 13px;" onclick="saveFaceAngles()">保存</button>
                     </span>
                 </div>
             </div>
@@ -1190,6 +1194,31 @@
             input.name = 'delay';
             input.value = delay;
             form.appendChild(input);
+            document.body.appendChild(form);
+            form.submit();
+        }
+
+        // 人脸角度配置
+        fetch('/api/face_angles')
+            .then(r => r.json())
+            .then(data => {
+                if (data.pan !== undefined) document.getElementById('facePanAngle').value = data.pan;
+                if (data.tilt !== undefined) document.getElementById('faceTiltAngle').value = data.tilt;
+            })
+            .catch(() => {});
+
+        function saveFaceAngles() {
+            const pan = document.getElementById('facePanAngle').value;
+            const tilt = document.getElementById('faceTiltAngle').value;
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = '/api/face_angles';
+            const p = document.createElement('input');
+            p.type = 'hidden'; p.name = 'pan'; p.value = pan;
+            const t = document.createElement('input');
+            t.type = 'hidden'; t.name = 'tilt'; t.value = tilt;
+            form.appendChild(p);
+            form.appendChild(t);
             document.body.appendChild(form);
             form.submit();
         }
