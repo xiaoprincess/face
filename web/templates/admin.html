@@ -1209,6 +1209,7 @@
         function saveFaceAngles() {
             const pan = document.getElementById('facePanAngle').value;
             const tilt = document.getElementById('faceTiltAngle').value;
+            console.log('Saving face angles:', pan, tilt);
             const form = document.createElement('form');
             form.method = 'POST';
             form.action = '/api/face_angles';
