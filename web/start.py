@@ -593,8 +593,6 @@ def receive_command():
         print(f"🔍 请进行人脸验证...")
         print("="*60 + "\n")
         
-        # 云台转到人脸识别位置
-        _turn_to_face()
 
         # 调用face.py进行人脸验证
         import subprocess
@@ -754,6 +752,9 @@ def api_face_verify():
         
         if 'base64,' in image_base64:
             image_base64 = image_base64.split('base64,')[1]
+        # 云台转到人脸识别位置
+        _turn_to_face()
+
         
         # 调用百度AI搜索人脸
         result = face_client.search(
@@ -801,10 +802,10 @@ def api_face_verify():
                 (cabinet['id'], app_id)
             )
             print(f"🗄️ 自动匹配柜子: {cabinet['cabinet_number']}号柜 - {cabinet['equipment_name']}")
-            # 转回原位
-            _turn_back_from_face()
-
             pan_to_cabinet(cabinet['id'])
+
+        # 转回原位
+        _turn_back_from_face()
 
         conn.commit()
         conn.close()
