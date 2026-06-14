@@ -667,7 +667,7 @@ def _esp32_request_thread(equipment_name):
         if cabinet:
             conn.execute(
                 'UPDATE applications SET cabinet_id = ? WHERE id = ?',
-                (cabinet['id'], app_id)
+                (cabinet['cabinet_number'], app_id)
             )
         conn.commit()
         conn.close()
@@ -686,7 +686,8 @@ def _esp32_request_thread(equipment_name):
                     lookAt(cabinet['id'], _picam2, _detector)
                     time.sleep(_laser_delay_seconds)
                     turnLED(False)
-                except Exception:
+                except Exception as e:
+                    print(e)
                     turnLED(False)
                     raise
                 finally:
@@ -984,6 +985,7 @@ def cabinet_edit(cabinet_id):
     cabinet_number = request.form.get('cabinet_number', '').strip()
     equipment_name = request.form.get('equipment_name', '').strip()
     components = request.form.getlist('components[]')
+    print(components,type(components))
 
     if not cabinet_number or not equipment_name:
         return redirect(url_for('admin_panel'))
