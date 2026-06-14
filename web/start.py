@@ -2,7 +2,7 @@
 # pip install flask flask-cors baidu-aip chardet requests urllib3 -i 
 # https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host pypi.tuna.tsinghua.edu.cn
 # 前置库安装
-# source source venv/bin/activate
+# source venv/bin/activate
 from flask import Flask, render_template, request, redirect, url_for, session, send_from_directory, jsonify
 from aip import AipFace
 import base64
@@ -34,7 +34,7 @@ try:
     print("✅ 云台模块已就绪（相机延迟初始化）")
 except Exception as e:
     _pan_tilt_ready = False
-    print(f"⚠️ 云台模块不可用（非树莓派环境或缺少依赖）")
+    print(f"⚠️ 云台模块不可用（非树莓派环境或缺少依赖）{e}")
 
 _laser_delay_seconds = 3.0   # 激光持续亮灯秒数，后台可调
 _face_pan_angle = 0.0         # 人脸识别水平转角（度）
