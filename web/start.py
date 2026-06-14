@@ -26,22 +26,45 @@ _picam2 = None
 _detector = None
 _hardware_lock = threading.Lock()
 
+_pan_tilt_ready = False
+_picam2 = None
+_detector = None
+face_capture = None
+
+try:
+    from face import capture_photo as face_capture
+    print("✅ face 模块已加载")
+except Exception as e:
+    print(f"⚠️ face 模块加载失败: {e}")
+
+try:
+    import picamera2
+    print("  picamera2 import OK")
+    _picam2 = picamera2.Picamera2()
+    print("  Picamera2() OK")
+except Exception as e:
+    import traceback
+    traceback.print_exc()
+    print(f"⚠️ picamera2 初始化失败: {e}")
+
+try:
+    import apriltag
+    _detector = apriltag.apriltag("tag36h11", threads=4)
+    print("  apriltag OK")
+except Exception as e:
+    import traceback
+    traceback.print_exc()
+    print(f"⚠️ apriltag 初始化失败: {e}")
+
 try:
     from agent_yuntai.panTilt import lookAt, turnLED, x_motor, y_motor
-    from face import capture_photo as face_capture
-    import picamera2
-    import apriltag
-
-    _picam2 = picamera2.Picamera2()
-    _detector = apriltag.apriltag("tag36h11", threads=4)
-    _pan_tilt_ready = True
-    print("✅ 云台模块已就绪")
+    if _picam2 is not None and _detector is not None:
+        _pan_tilt_ready = True
+        print("✅ 云台模块已就绪")
 except Exception as e:
-    _pan_tilt_ready = False
-    _picam2 = None
-    _detector = None
-    face_capture = None
-    print(f"⚠️ 云台模块不可用（非树莓派环境或缺少依赖）{e}")
+    import traceback
+    traceback.print_exc()
+    print(f"⚠️ panTilt 导入失败: {e}")
 
 _laser_delay_seconds = 3.0   # 激光持续亮灯秒数，后台可调
 _face_pan_angle = 0.0         # 人脸识别水平转角（度）
@@ -1018,4 +1041,5 @@ if __name__ == '__main__':
     print("📷 人脸识别: 百度AI API")
     print("📁 上传文件目录: static/uploads/")
     print("="*50 + "\n")
+    os.environ.setdefault("WERKZEUG_RUN_EXCLUDE_PATTERNS", "*.db;*.db-journal;*.db-wal")
     app.run(debug=True, host='127.0.0.1', port=5050)
