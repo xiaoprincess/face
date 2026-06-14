@@ -24,7 +24,6 @@ import threading
 _pan_tilt_ready = False
 _picam2 = None
 _detector = None
-_hardware_lock = threading.Lock()
 
 try:
     from face import capture_photo as face_capture
@@ -64,38 +63,38 @@ _face_tilt_angle = 0.0        # 人脸识别垂直转角（度）
 
 
 def _turn_to_face():
+    print("turn to face...")
     """云台转到人脸识别位置（调用线程阻塞，~ms级）"""
-    if _pan_tilt_ready and (_face_pan_angle != 0 or _face_tilt_angle != 0):
-        with _hardware_lock:
-            x_motor.turnAngle(abs(_face_pan_angle), 1 if _face_pan_angle < 0 else 0)
-            y_motor.turnAngle(abs(_face_tilt_angle), 1 if _face_tilt_angle < 0 else 0)
+    if _pan_tilt_ready:
+        x_motor.turnAngle(abs(_face_pan_angle), 1 if _face_pan_angle < 0 else 0)
+        y_motor.turnAngle(abs(_face_tilt_angle), 1 if _face_tilt_angle < 0 else 0)
         print(f"🔄 云台转到人脸位置 pan={_face_pan_angle}° tilt={_face_tilt_angle}°")
+    else:
+        print("pan is not ready")
 
 
 def _turn_back_from_face():
     """从人脸位置转回原位"""
-    if _pan_tilt_ready and (_face_pan_angle != 0 or _face_tilt_angle != 0):
-        with _hardware_lock:
-            x_motor.turnAngle(abs(_face_pan_angle), 0 if _face_pan_angle < 0 else 1)
-            y_motor.turnAngle(abs(_face_tilt_angle), 0 if _face_tilt_angle < 0 else 1)
+    if _pan_tilt_ready:
+        x_motor.turnAngle(abs(_face_pan_angle), 0 if _face_pan_angle < 0 else 1)
+        y_motor.turnAngle(abs(_face_tilt_angle), 0 if _face_tilt_angle < 0 else 1)
         print("↩️ 云台转回原位")
 
 
 def _pan_to_cabinet_sync(cabinet_id):
     """同步执行云台指向（在独立线程中调用）"""
-    with _hardware_lock:
-        try:
-            _picam2.configure(_picam2.create_preview_configuration(main={"size": (3280, 2464)}))
-            _picam2.start()
-            turnLED(True)
-            lookAt(cabinet_id, _picam2, _detector)
-            time.sleep(_laser_delay_seconds)
-            turnLED(False)
-        except Exception:
-            turnLED(False)
-            raise
-        finally:
-            _picam2.stop()
+    try:
+        _picam2.configure(_picam2.create_preview_configuration(main={"size": (3280, 2464)}))
+        _picam2.start()
+        turnLED(True)
+        lookAt(cabinet_id, _picam2, _detector)
+        time.sleep(_laser_delay_seconds)
+        turnLED(False)
+    except Exception:
+        turnLED(False)
+        raise
+    finally:
+        _picam2.stop()
 
 
 def pan_to_cabinet(cabinet_id):
@@ -594,9 +593,7 @@ def uploaded_file(filename):
 
 def _esp32_request_thread(equipment_name):
     try:
-        with _hardware_lock:
-            _turn_to_face()
-
+        _turn_to_face()
         # 人脸识别循环：最多30秒，成功则跳出
         TIMEOUT = 30
         start_time = time.time()
@@ -609,14 +606,13 @@ def _esp32_request_thread(equipment_name):
                 print("Camera not available")
                 return
 
-            with _hardware_lock:
-                _picam2.configure(_picam2.create_still_configuration(
-                    main={"size": (640, 480), "format": "RGB888"}
-                ))
-                _picam2.start()
-                time.sleep(0.5)
-                image = face_capture(_picam2)
-                _picam2.stop()
+            _picam2.configure(_picam2.create_still_configuration(
+                main={"size": (640, 480), "format": "RGB888"}
+            ))
+            _picam2.start()
+            time.sleep(0.5)
+            image = face_capture(_picam2)
+            _picam2.stop()
 
             result = face_client.search(
                 image=image, image_type='BASE64', group_id_list=GROUP_ID
@@ -675,23 +671,22 @@ def _esp32_request_thread(equipment_name):
         print(f"Face OK: {user['username']} (score:{score:.1f})")
         print(f"App created: {equipment_name} (ID: #{app_id})")
 
-        with _hardware_lock:
-            _turn_back_from_face()
-            if cabinet and _pan_tilt_ready:
-                _picam2.configure(_picam2.create_preview_configuration(main={"size": (3280, 2464)}))
-                _picam2.start()
-                try:
-                    turnLED(True)
-                    print(f"PanTilt to tag_id={cabinet['id']}")
-                    lookAt(cabinet['id'], _picam2, _detector)
-                    time.sleep(_laser_delay_seconds)
-                    turnLED(False)
-                except Exception as e:
-                    print(e)
-                    turnLED(False)
-                    raise
-                finally:
-                    _picam2.stop()
+        _turn_back_from_face()
+        if cabinet and _pan_tilt_ready:
+            _picam2.configure(_picam2.create_preview_configuration(main={"size": (3280, 2464)}))
+            _picam2.start()
+            try:
+                turnLED(True)
+                print(f"PanTilt to tag_id={cabinet['id']}")
+                lookAt(cabinet['id'], _picam2, _detector)
+                time.sleep(_laser_delay_seconds)
+                turnLED(False)
+            except Exception as e:
+                print(e)
+                turnLED(False)
+                raise
+            finally:
+                _picam2.stop()
 
     except Exception as e:
         print(f"ESP32 request error: {e}")
@@ -710,6 +705,7 @@ def receive_command():
     print(f"Time: {receive_time}")
     print(f"Equipment: {equipment_name}")
     print("="*60 + "\n")
+    # _esp32_request_thread(equipment_name)
     threading.Thread(
         target=_esp32_request_thread, args=(equipment_name,),
         daemon=True
