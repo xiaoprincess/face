@@ -26,35 +26,29 @@ _picam2 = None
 _detector = None
 _hardware_lock = threading.Lock()
 
-_pan_tilt_ready = False
-_picam2 = None
-_detector = None
-face_capture = None
-
 try:
     from face import capture_photo as face_capture
-    print("✅ face 模块已加载")
+    print("  face OK")
 except Exception as e:
-    print(f"⚠️ face 模块加载失败: {e}")
+    face_capture = None
+    print(f"  face FAIL: {e}")
 
 try:
     import picamera2
-    print("  picamera2 import OK")
+    print("  picamera2 OK")
     _picam2 = picamera2.Picamera2()
     print("  Picamera2() OK")
 except Exception as e:
-    import traceback
-    traceback.print_exc()
-    print(f"⚠️ picamera2 初始化失败: {e}")
+    _picam2 = None
+    print(f"  picamera2 FAIL: {e}")
 
 try:
     import apriltag
     _detector = apriltag.apriltag("tag36h11", threads=4)
     print("  apriltag OK")
 except Exception as e:
-    import traceback
-    traceback.print_exc()
-    print(f"⚠️ apriltag 初始化失败: {e}")
+    _detector = None
+    print(f"  apriltag FAIL: {e}")
 
 try:
     from agent_yuntai.panTilt import lookAt, turnLED, x_motor, y_motor
@@ -62,9 +56,7 @@ try:
         _pan_tilt_ready = True
         print("✅ 云台模块已就绪")
 except Exception as e:
-    import traceback
-    traceback.print_exc()
-    print(f"⚠️ panTilt 导入失败: {e}")
+    print(f"  panTilt FAIL: {e}")
 
 _laser_delay_seconds = 3.0   # 激光持续亮灯秒数，后台可调
 _face_pan_angle = 0.0         # 人脸识别水平转角（度）
@@ -604,7 +596,20 @@ def _esp32_request_thread(equipment_name):
     try:
         with _hardware_lock:
             _turn_to_face()
-            if _pan_tilt_ready and face_capture:
+
+        # 人脸识别循环：最多30秒，成功则跳出
+        TIMEOUT = 30
+        start_time = time.time()
+        user_id = None
+        score = 0
+        user = None
+
+        while time.time() - start_time < TIMEOUT:
+            if not _pan_tilt_ready or not face_capture:
+                print("Camera not available")
+                return
+
+            with _hardware_lock:
                 _picam2.configure(_picam2.create_still_configuration(
                     main={"size": (640, 480), "format": "RGB888"}
                 ))
@@ -612,36 +617,43 @@ def _esp32_request_thread(equipment_name):
                 time.sleep(0.5)
                 image = face_capture(_picam2)
                 _picam2.stop()
-            else:
-                print("Camera not available")
-                return
 
-        result = face_client.search(
-            image=image, image_type='BASE64', group_id_list=GROUP_ID
-        )
-        if result.get('error_code') != 0:
-            print(f"Face search failed: {result.get('error_msg')}")
-            return
+            result = face_client.search(
+                image=image, image_type='BASE64', group_id_list=GROUP_ID
+            )
+            if result.get('error_code') != 0:
+                print(f"Face search failed: {result.get('error_msg')}")
+                time.sleep(2)
+                continue
 
-        user_list = result.get('result', {}).get('user_list', [])
-        if not user_list:
-            print("No matching face found")
-            return
+            user_list = result.get('result', {}).get('user_list', [])
+            if not user_list:
+                r = int(TIMEOUT - (time.time() - start_time))
+                print(f"No match, retry ({r}s left)")
+                time.sleep(2)
+                continue
 
-        top_user = user_list[0]
-        score = float(top_user.get('score', 0))
-        user_id = top_user.get('user_id', '')
-        if score < 70:
-            print(f"Score too low ({score:.1f})")
+            score = float(user_list[0].get('score', 0))
+            user_id = user_list[0].get('user_id', '')
+            if score < 70:
+                r = int(TIMEOUT - (time.time() - start_time))
+                print(f"Score low ({score:.1f}), retry ({r}s left)")
+                time.sleep(2)
+                continue
+
+            conn = get_db()
+            user = conn.execute('SELECT * FROM users WHERE id = ?', (int(user_id),)).fetchone()
+            conn.close()
+            if user:
+                break
+            print("User not found, retry")
+            time.sleep(2)
+
+        if not user:
+            print("Face recognition timed out")
             return
 
         conn = get_db()
-        user = conn.execute('SELECT * FROM users WHERE id = ?', (int(user_id),)).fetchone()
-        if not user:
-            conn.close()
-            print("User not found")
-            return
-
         purpose = f"[Auto] Score: {score:.1f}"
         conn.execute(
             "INSERT INTO applications"
@@ -1041,5 +1053,4 @@ if __name__ == '__main__':
     print("📷 人脸识别: 百度AI API")
     print("📁 上传文件目录: static/uploads/")
     print("="*50 + "\n")
-    os.environ.setdefault("WERKZEUG_RUN_EXCLUDE_PATTERNS", "*.db;*.db-journal;*.db-wal")
-    app.run(debug=True, host='127.0.0.1', port=5050)
+    app.run(host='127.0.0.1', port=5050)
