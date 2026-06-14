@@ -116,6 +116,7 @@ def api_laser_delay():
     if request.method == 'GET':
         return jsonify({'delay': _laser_delay_seconds})
     _laser_delay_seconds = float(request.form.get('delay', 3.0))
+    save_setting('laser_delay', _laser_delay_seconds)
     print(f"⚙️ 激光延时已更新为 {_laser_delay_seconds} 秒")
     return redirect(url_for('admin_panel'))
 
@@ -128,8 +129,13 @@ def api_face_angles():
         return jsonify({'error': 'unauthorized'}), 403
     if request.method == 'GET':
         return jsonify({'pan': _face_pan_angle, 'tilt': _face_tilt_angle})
-    _face_pan_angle = float(request.form.get('pan', 0))
-    _face_tilt_angle = float(request.form.get('tilt', 0))
+    try:
+        _face_pan_angle = float(request.form.get('pan', 0))
+        _face_tilt_angle = float(request.form.get('tilt', 0))
+    except (ValueError, TypeError):
+        pass
+    save_setting('face_pan_angle', _face_pan_angle)
+    save_setting('face_tilt_angle', _face_tilt_angle)
     print(f"⚙️ 人脸角度已更新 pan={_face_pan_angle}° tilt={_face_tilt_angle}°")
     return redirect(url_for('admin_panel'))
 APP_ID = '123044418'
@@ -212,6 +218,19 @@ def init_db():
         )
     ''')
 
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    ''')
+
+    # 初始化默认设置
+    for k, v in [('laser_delay', '3.0'), ('face_pan_angle', '0.0'), ('face_tilt_angle', '0.0')]:
+        cursor.execute(
+            'INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)', (k, v)
+        )
+
     cursor.execute("SELECT * FROM users WHERE role = 'admin'")
     if not cursor.fetchone():
         admin_password = hashlib.sha256('admin123'.encode()).hexdigest()
@@ -223,6 +242,29 @@ def init_db():
     
     conn.commit()
     conn.close()
+
+def load_settings():
+    """从数据库加载配置到全局变量"""
+    global _laser_delay_seconds, _face_pan_angle, _face_tilt_angle
+    conn = get_db()
+    rows = conn.execute('SELECT key, value FROM settings').fetchall()
+    conn.close()
+    settings = {r['key']: r['value'] for r in rows}
+    _laser_delay_seconds = float(settings.get('laser_delay', '3.0'))
+    _face_pan_angle = float(settings.get('face_pan_angle', '0.0'))
+    _face_tilt_angle = float(settings.get('face_tilt_angle', '0.0'))
+    print(f"⚙️ 已加载设置: laser={_laser_delay_seconds}s pan={_face_pan_angle}° tilt={_face_tilt_angle}°")
+
+
+def save_setting(key, value):
+    """持久化单个配置项"""
+    conn = get_db()
+    conn.execute(
+        'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', (key, str(value))
+    )
+    conn.commit()
+    conn.close()
+
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
@@ -1041,7 +1083,8 @@ if __name__ == '__main__':
         os.makedirs('static')
     
     init_db()
-    
+    load_settings()
+
     print("\n" + "="*50)
     print("🚀 器材申请管理系统启动成功！")
     print("📍 Flask 监听: 127.0.0.1:5050 (内部)")
@@ -1051,4 +1094,5 @@ if __name__ == '__main__':
     print("📷 人脸识别: 百度AI API")
     print("📁 上传文件目录: static/uploads/")
     print("="*50 + "\n")
+    os.environ.setdefault("WERKZEUG_RUN_EXCLUDE_PATTERNS", "*.db;*.db-journal;*.db-wal")
     app.run(host='127.0.0.1', port=5050)
