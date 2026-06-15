@@ -715,12 +715,13 @@ def _esp32_request_thread(equipment_name):
 
         _turn_back_from_face()
         if cabinet and _pan_tilt_ready:
-            _picam2.configure(_picam2.create_preview_configuration(main={"size": (3280, 2464)}))
+            _picam2.configure(_picam2.create_preview_configuration(main={"size": (1920,1080)}))
             _picam2.start()
+            time.sleep(1)
             try:
                 turnLED(True)
-                print(f"PanTilt to tag_id={cabinet['id']}")
-                lookAt(cabinet['id'], _picam2, _detector)
+                print(f"PanTilt to tag_id={cabinet['cabinet_number']}")
+                lookAt(int(cabinet['cabinet_number']), _picam2, _detector)
                 time.sleep(_laser_delay_seconds)
                 turnLED(False)
             except Exception as e:
@@ -772,6 +773,7 @@ def api_face_login():
             image_type='BASE64',
             group_id_list=GROUP_ID,
         )
+        print(result)
 
         if result.get('error_code') != 0:
             return jsonify({'success': False, 'message': '人脸识别失败，请重试'})
