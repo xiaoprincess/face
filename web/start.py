@@ -754,6 +754,62 @@ def receive_command():
     ).start()
     return f"OK: {equipment_name}", 200
 
+@app.route('/api/face_login', methods=['POST'])
+def api_face_login():
+    """人脸识别登录"""
+    try:
+        data = request.get_json()
+        image_base64 = data.get('image', '')
+
+        if not image_base64:
+            return jsonify({'success': False, 'message': '缺少人脸图片'})
+
+        if 'base64,' in image_base64:
+            image_base64 = image_base64.split('base64,')[1]
+
+        result = face_client.search(
+            image=image_base64,
+            image_type='BASE64',
+            group_id_list=GROUP_ID,
+        )
+
+        if result.get('error_code') != 0:
+            return jsonify({'success': False, 'message': '人脸识别失败，请重试'})
+
+        user_list = result.get('result', {}).get('user_list', [])
+        if not user_list:
+            return jsonify({'success': False, 'message': '未找到匹配人脸，请先注册'})
+
+        top_user = user_list[0]
+        score = float(top_user.get('score', 0))
+        user_id = top_user.get('user_id', '')
+
+        if score < 70:
+            return jsonify({'success': False, 'message': f'匹配度过低({score:.1f})，请重试'})
+
+        conn = get_db()
+        user = conn.execute('SELECT * FROM users WHERE id = ?', (int(user_id),)).fetchone()
+        conn.close()
+
+        if not user:
+            return jsonify({'success': False, 'message': '用户不存在'})
+
+        session['user_id'] = user['id']
+        session['username'] = user['username']
+        session['role'] = user['role']
+
+        redirect_url = '/admin' if user['role'] == 'admin' else '/user'
+        print(f"✅ 人脸登录: {user['username']} (分数:{score:.1f})")
+
+        return jsonify({
+            'success': True,
+            'message': f'欢迎 {user["username"]}',
+            'redirect': redirect_url
+        })
+
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)})
+
 @app.route('/api/face_verify', methods=['POST'])
 def api_face_verify():
     """face.py调用：人脸验证并创建申请"""
