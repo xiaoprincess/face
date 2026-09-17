@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}零件管家设置{% endblock %}
+{% block content %}
+<section class="section-heading">
+    <span class="eyebrow">Admin · Settings</span>
+    <h1>零件管家设置</h1>
+    <p class="muted">硬件和百度人脸服务都是可选能力；未就绪时不会影响网页和数据库功能。</p>
+    <div class="actions"><a class="button" href="{{ url_for('parts.admin_dashboard') }}">返回后台</a></div>
+</section>
+<div class="two-column">
+    <section class="panel">
+        <h2>运行参数</h2>
+        <form method="post" action="{{ url_for('parts.settings') }}">
+            <label>激光指示时长（秒）<input type="number" name="laser_delay" min="0" max="60" step="0.1" value="{{ settings.laser_delay }}" required></label>
+            <label>人脸识别水平角度（°）<input type="number" name="face_pan_angle" min="-180" max="180" step="0.5" value="{{ settings.face_pan_angle }}" required></label>
+            <label>人脸识别俯仰角度（°）<input type="number" name="face_tilt_angle" min="-180" max="180" step="0.5" value="{{ settings.face_tilt_angle }}" required></label>
+            <label>人脸匹配阈值<input type="number" name="face_threshold" min="0" max="100" step="0.1" value="{{ settings.face_threshold }}" required></label>
+            <label>百度人脸用户组<input name="face_group_id" maxlength="100" value="{{ face_group_id }}" required></label>
+            <button class="button primary" type="submit">保存设置</button>
+        </form>
+    </section>
+    <aside class="panel">
+        <h2>可选能力状态</h2>
+        <p><span class="badge {{ 'approved' if hardware_status.face.available else 'rejected' }}">人脸服务</span> {{ hardware_status.face.message }}</p>
+        <p><span class="badge {{ 'approved' if hardware_status.camera.available else 'rejected' }}">树莓派相机</span> {{ hardware_status.camera.message }}</p>
+        <p><span class="badge {{ 'approved' if hardware_status.pan_tilt.available else 'rejected' }}">云台</span> {{ hardware_status.pan_tilt.message }}</p>
+        <p class="meta">密钥只从应用配置或 BAIDU_APP_ID、BAIDU_API_KEY、BAIDU_SECRET_KEY 环境变量读取，本页面不会保存密钥。</p>
+        <p class="meta">ESP32 兼容入口：<code>GET /command?cmd=器材名</code></p>
+    </aside>
+</div>
+{% endblock %}

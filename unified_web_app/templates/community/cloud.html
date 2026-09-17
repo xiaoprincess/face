@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}云盘 - 社区{% endblock %}
+{% block head %}{% include "community/_styles.html" %}{% endblock %}
+{% block content %}
+{% include "community/_nav.html" %}
+<section class="section-heading"><p class="eyebrow">Cloud drive</p><h1>云盘</h1><p class="muted">上传、下载和管理项目资料，单文件上限由站点配置控制。</p></section>
+<section class="community-card">
+    <form class="row-actions" action="{{ url_for('community.upload_file') }}" method="post" enctype="multipart/form-data">
+        <input style="max-width:520px" type="file" name="file" required>
+        <button class="button primary" type="submit">上传文件</button>
+    </form>
+</section>
+<div class="table-wrap" style="margin-top:20px">
+    <table>
+        <thead><tr><th>文件</th>{% if current_user.is_admin %}<th>所有者</th>{% endif %}<th>大小</th><th>上传时间</th><th>操作</th></tr></thead>
+        <tbody>
+        {% for file in files %}
+            <tr>
+                <td>{{ file.original_name }}</td>
+                {% if current_user.is_admin %}<td>{{ file.owner.username }}</td>{% endif %}
+                <td class="file-size">{{ '%.1f'|format(file.file_size / 1024) }} KB</td>
+                <td>{{ file.uploaded_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                <td><div class="row-actions">
+                    <a class="button small" href="{{ url_for('community.download_file', file_id=file.id) }}">下载</a>
+                    <form action="{{ url_for('community.delete_file', file_id=file.id) }}" method="post" onsubmit="return confirm('确定删除这个文件？')"><button class="button danger small" type="submit">删除</button></form>
+                </div></td>
+            </tr>
+        {% else %}<tr><td colspan="5" class="muted">暂无文件</td></tr>{% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

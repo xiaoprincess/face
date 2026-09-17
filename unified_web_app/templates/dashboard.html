@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}工作台 - 小智零件社区{% endblock %}
+{% block content %}
+<section class="desk-heading"><div><p class="eyebrow">YOUR CREATIVE SPACE</p><h1>你好，{{ current_user.username }}<span class="greeting-dot">.</span></h1><p class="muted">从一个零件开始，让下一个想法发生。</p></div><a class="button" href="{{ url_for('community.notifications') }}">查看通知 ↗</a></section>
+<section class="studio-hero">
+    <div class="studio-hero-copy"><span class="hero-kicker">小智 · 零件管家</span><h2>好想法，<br>从这里开始组装。</h2><p>找到需要的器材，连上志同道合的伙伴。<br>把更多时间，留给创造本身。</p><a class="button primary" href="{{ url_for('parts.index') }}">进入零件管家 <span aria-hidden="true">↗</span></a></div>
+    <div class="cabinet-art" aria-hidden="true"><div class="art-caption">A PLACE FOR EVERY PART</div><div class="art-cabinet"><div class="art-cabinet-top"><span>小智 / PARTS</span><i></i></div><div class="art-drawers">{% for n in range(1, 10) %}<div class="art-drawer"><span>{{ '%02d'|format(n) }}</span><i></i></div>{% endfor %}</div></div><div class="art-tag"><span>✦</span> 让每个零件，各得其所</div></div>
+</section>
+<div class="desk-section-heading"><h2>你的创作工具箱</h2><span class="meta">连接器材、伙伴与灵感</span></div>
+<div class="card-grid workspace-tools">
+    <a class="feature-card" href="{{ url_for('parts.index') }}"><span class="tool-number">01 / EQUIPMENT</span><span class="card-icon" aria-hidden="true">▦</span><h2>零件管家 <span>↗</span></h2><p>查找器材与柜位，跟进申请进度。</p><span class="tool-link">找到下一块拼图</span></a>
+    <a class="feature-card" href="{{ url_for('community.index') }}"><span class="tool-number">02 / COMMUNITY</span><span class="card-icon" aria-hidden="true">✳</span><h2>项目社区 <span>↗</span></h2><p>分享新进展，让想法碰撞出火花。</p><span class="tool-link">看看大家在做什么</span></a>
+    <a class="feature-card" href="{{ url_for('community.chat') }}"><span class="tool-number">03 / CONNECT</span><span class="card-icon" aria-hidden="true">◌</span><h2>即时私聊 <span>↗</span></h2><p>与站点成员一对一沟通，消息实时送达。</p><span class="tool-link">继续一段对话</span></a>
+    <a class="feature-card" href="{{ url_for('community.cloud') }}"><span class="tool-number">04 / FILES</span><span class="card-icon" aria-hidden="true">▱</span><h2>项目云盘 <span>↗</span></h2><p>收好数据手册、图纸与项目文件。</p><span class="tool-link">打开你的资料空间</span></a>
+</div>
+<footer class="desk-footer"><span>少一点寻找，多一点创造。</span><span>小智零件社区</span></footer>
+{% endblock %}

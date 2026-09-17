@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}我的器材申请 - 零件管家{% endblock %}
+{% block head %}
+<style>
+    .parts-stats { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:20px 0; }
+    .parts-stat { background:white; border:1px solid var(--line); border-radius:14px; padding:18px; }
+    .parts-stat strong { display:block; font-size:28px; margin-top:4px; }
+    .item-row { display:grid; grid-template-columns:minmax(0,2fr) minmax(100px,1fr) auto; gap:10px; align-items:end; }
+    .item-row label { margin:8px 0; }
+    .photo-list { display:flex; flex-wrap:wrap; gap:8px; }
+    .photo-list img { width:72px; height:72px; object-fit:cover; border-radius:8px; border:1px solid var(--line); }
+    @media(max-width:760px) { .parts-stats { grid-template-columns:repeat(2,1fr); } .item-row { grid-template-columns:1fr; } }
+</style>
+{% endblock %}
+{% block content %}
+<section class="section-heading">
+    <span class="eyebrow">Parts keeper</span>
+    <h1>我的器材申请</h1>
+    <p class="muted">提交申请、查看审批进度，并按柜号快速找到元件。</p>
+</section>
+
+<div class="parts-stats">
+    <div class="parts-stat"><span class="muted">全部</span><strong>{{ counts.total }}</strong></div>
+    <div class="parts-stat"><span class="muted">待审批</span><strong>{{ counts.pending }}</strong></div>
+    <div class="parts-stat"><span class="muted">已批准</span><strong>{{ counts.approved }}</strong></div>
+    <div class="parts-stat"><span class="muted">已拒绝</span><strong>{{ counts.rejected }}</strong></div>
+</div>
+
+<div class="two-column">
+    <section class="panel">
+        <h2>申请记录</h2>
+        {% if applications %}
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>器材</th><th>用途 / 日期</th><th>位置</th><th>状态</th><th></th></tr></thead>
+                <tbody>
+                {% for application in applications %}
+                    <tr>
+                        <td>
+                            {% for item in application.equipment_items %}
+                                <div><strong>{{ item.name }}</strong> × {{ item.quantity }}</div>
+                            {% endfor %}
+                            {% if application.photo_list %}
+                            <div class="photo-list">
+                                {% for photo in application.photo_list %}
+                                    <a href="{{ url_for('parts.uploaded_file', filename=photo) }}" target="_blank" rel="noopener"><img src="{{ url_for('parts.uploaded_file', filename=photo) }}" alt="器材照片"></a>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </td>
+                        <td>{{ application.purpose }}<div class="meta">期望：{{ application.expected_date or '未指定' }} · {{ application.created_at.strftime('%Y-%m-%d %H:%M') }}</div></td>
+                        <td>{% if application.cabinet %}{{ application.cabinet.cabinet_number }} 号柜{% else %}<span class="muted">待匹配</span>{% endif %}</td>
+                        <td>
+                            <span class="badge {{ application.status }}">{{ {'pending':'待审批','approved':'已批准','rejected':'已拒绝','cancelled':'已取消'}.get(application.status, application.status) }}</span>
+                            {% if application.reject_reason %}<div class="meta">{{ application.reject_reason }}</div>{% endif %}
+                        </td>
+                        <td>
+                            {% if application.status == 'pending' %}
+                            <form method="post" action="{{ url_for('parts.cancel_application', application_id=application.id) }}" data-confirm="确定取消这条申请吗？">
+                                <button class="button small danger" type="submit">取消</button>
+                            </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}<p class="muted">还没有申请记录。</p>{% endif %}
+    </section>
+
+    <aside class="panel">
+        <h2>新建申请</h2>
+        <form method="post" action="{{ url_for('parts.apply_equipment') }}" enctype="multipart/form-data">
+            <div data-item-list>
+                <div class="item-row">
+                    <label>器材名称<input name="equipment_names[]" maxlength="200" required></label>
+                    <label>数量<input name="quantities[]" value="1" maxlength="30" required></label>
+                    <button class="button small danger" type="button" data-remove-item aria-label="移除此项">移除</button>
+                </div>
+            </div>
+            <button class="button small" type="button" data-add-item>添加器材</button>
+            <label>指定柜子（可选）
+                <select name="cabinet_id">
+                    <option value="">自动匹配</option>
+                    {% for cabinet in cabinets %}<option value="{{ cabinet.id }}">{{ cabinet.cabinet_number }} 号柜 · {{ cabinet.equipment_name }}</option>{% endfor %}
+                </select>
+            </label>
+            <label>用途<textarea name="purpose" maxlength="2000" required></textarea></label>
+            <label>期望日期<input type="date" name="expected_date"></label>
+            <label>器材照片（最多 8 张）<input type="file" name="equipment_photos[]" accept="image/png,image/jpeg,image/gif,image/bmp,image/webp" multiple></label>
+            <button class="button primary" type="submit">提交申请</button>
+        </form>
+    </aside>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/parts.js') }}" defer></script>{% endblock %}

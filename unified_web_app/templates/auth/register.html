@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}注册 - 小智零件社区{% endblock %}
+{% block content %}
+<section class="auth-card">
+    <p class="eyebrow">开始新的创造</p><h1>加入小智社区</h1><p class="auth-intro">一个账号，连接你的器材、伙伴和资料。</p>
+    <form method="post">
+        <label>用户名<input name="username" required maxlength="80" autocomplete="username"></label>
+        <label>邮箱<input type="email" name="email" required maxlength="120" autocomplete="email"></label>
+        <label>密码<input type="password" name="password" required minlength="8" autocomplete="new-password"></label>
+        <label>确认密码<input type="password" name="confirm_password" required minlength="8" autocomplete="new-password"></label>
+        <button class="button primary" type="submit">创建账号</button>
+    </form>
+    <p class="muted">已有账号？<a href="{{ url_for('auth.login') }}">立即登录 →</a></p>
+</section>
+{% endblock %}

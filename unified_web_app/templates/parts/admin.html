@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}零件管家后台{% endblock %}
+{% block head %}
+<style>
+    .parts-stats { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin:20px 0 30px; }
+    .parts-stat { background:white; border:1px solid var(--line); border-radius:14px; padding:17px; }
+    .parts-stat strong { display:block; font-size:27px; margin-top:4px; }
+    .admin-section { margin-top:24px; }
+    .review-actions { display:flex; flex-wrap:wrap; gap:7px; }
+    .review-actions textarea { min-height:64px; min-width:190px; }
+    .cabinet-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:15px; }
+    .cabinet-card { border:1px solid var(--line); border-radius:14px; padding:18px; background:white; }
+    .cabinet-card summary { cursor:pointer; font-weight:800; }
+    .component-row { display:grid; grid-template-columns:minmax(0,1.5fr) 90px 80px minmax(0,1.2fr) auto; gap:8px; align-items:end; }
+    .component-row label { margin:7px 0; }
+    .hardware-ok { color:#16623e; } .hardware-off { color:#922; }
+    @media(max-width:760px) { .parts-stats,.cabinet-grid { grid-template-columns:1fr 1fr; } .component-row { grid-template-columns:1fr; } }
+</style>
+{% endblock %}
+{% block content %}
+<section class="section-heading">
+    <span class="eyebrow">Admin · Parts keeper</span>
+    <h1>零件管家后台</h1>
+    <p class="muted">审批器材申请，维护柜子与柜内元件。</p>
+    <div class="actions"><a class="button" href="{{ url_for('parts.settings') }}">系统设置</a></div>
+</section>
+
+<div class="parts-stats">
+    <div class="parts-stat"><span class="muted">用户</span><strong>{{ user_count }}</strong></div>
+    <div class="parts-stat"><span class="muted">申请</span><strong>{{ counts.total }}</strong></div>
+    <div class="parts-stat"><span class="muted">待审批</span><strong>{{ counts.pending }}</strong></div>
+    <div class="parts-stat"><span class="muted">已批准</span><strong>{{ counts.approved }}</strong></div>
+    <div class="parts-stat"><span class="muted">已拒绝</span><strong>{{ counts.rejected }}</strong></div>
+</div>
+
+<section class="panel admin-section">
+    <div class="toolbar"><div><h2>申请审批</h2><span class="meta">待审批优先显示</span></div></div>
+    {% if applications %}
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>申请人</th><th>器材</th><th>用途</th><th>柜子</th><th>状态 / 操作</th></tr></thead>
+            <tbody>
+            {% for application in applications %}
+                <tr>
+                    <td><strong>{{ application.applicant.username }}</strong><div class="meta">{{ application.created_at.strftime('%Y-%m-%d %H:%M') }}</div></td>
+                    <td>{% for item in application.equipment_items %}<div>{{ item.name }} × {{ item.quantity }}</div>{% endfor %}</td>
+                    <td>{{ application.purpose }}{% if application.expected_date %}<div class="meta">期望 {{ application.expected_date }}</div>{% endif %}</td>
+                    <td>{% if application.cabinet %}{{ application.cabinet.cabinet_number }} 号柜{% else %}<span class="muted">未匹配</span>{% endif %}</td>
+                    <td>
+                        <span class="badge {{ application.status }}">{{ {'pending':'待审批','approved':'已批准','rejected':'已拒绝','cancelled':'已取消'}.get(application.status, application.status) }}</span>
+                        {% if application.reject_reason %}<div class="meta">{{ application.reject_reason }}</div>{% endif %}
+                        {% if application.status == 'pending' %}
+                        <div class="review-actions">
+                            <form method="post" action="{{ url_for('parts.approve_application', application_id=application.id) }}"><button class="button small primary" type="submit">批准</button></form>
+                            <form method="post" action="{{ url_for('parts.reject_application', application_id=application.id) }}">
+                                <textarea name="reject_reason" maxlength="2000" placeholder="拒绝原因" required></textarea>
+                                <button class="button small danger" type="submit">拒绝</button>
+                            </form>
+                        </div>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}<p class="muted">暂无申请。</p>{% endif %}
+</section>
+
+<section class="panel admin-section">
+    <h2>新增柜子</h2>
+    <form method="post" action="{{ url_for('parts.cabinet_create') }}">
+        <div class="two-column">
+            <label>柜号<input name="cabinet_number" maxlength="50" required></label>
+            <label>器材分类<input name="equipment_name" maxlength="200" required></label>
+        </div>
+        <label>说明<textarea name="description" maxlength="2000"></textarea></label>
+        <h3>柜内元件</h3>
+        <div data-component-list>
+            <div class="component-row">
+                <label>名称<input name="component_names[]" maxlength="200"></label>
+                <label>数量<input name="component_quantities[]" type="number" min="0" value="1"></label>
+                <label>单位<input name="component_units[]" maxlength="30" value="件"></label>
+                <label>箱号/备注<input name="component_notes[]" maxlength="500"></label>
+                <button class="button small danger" type="button" data-remove-component>移除</button>
+            </div>
+        </div>
+        <div class="actions"><button class="button small" type="button" data-add-component>添加元件</button><button class="button primary" type="submit">创建柜子</button></div>
+    </form>
+</section>
+
+<section class="admin-section cabinet-section">
+    <div class="toolbar"><div><h2>柜子与元件</h2><span class="meta">共 {{ cabinets|length }} 个柜子</span></div></div>
+    <div class="cabinet-grid">
+    {% for cabinet in cabinets %}
+        <details class="cabinet-card">
+            <summary>{{ cabinet.cabinet_number }} 号柜 · {{ cabinet.equipment_name }}</summary>
+            <p class="muted">{{ cabinet.description or '暂无说明' }}</p>
+            <p>{% for component in cabinet.components %}<span class="badge">{{ component.component_name }} × {{ component.quantity }} {{ component.unit }}{% if component.notes %} · {{ component.notes }}{% endif %}</span> {% else %}<span class="muted">暂无元件</span>{% endfor %}</p>
+            <form method="post" action="{{ url_for('parts.cabinet_edit', cabinet_id=cabinet.id) }}">
+                <label>柜号<input name="cabinet_number" value="{{ cabinet.cabinet_number }}" maxlength="50" required></label>
+                <label>器材分类<input name="equipment_name" value="{{ cabinet.equipment_name }}" maxlength="200" required></label>
+                <label>说明<textarea name="description" maxlength="2000">{{ cabinet.description or '' }}</textarea></label>
+                <div data-component-list>
+                {% for component in cabinet.components %}
+                    <div class="component-row">
+                        <label>名称<input name="component_names[]" value="{{ component.component_name }}" maxlength="200"></label>
+                        <label>数量<input name="component_quantities[]" type="number" min="0" value="{{ component.quantity }}"></label>
+                        <label>单位<input name="component_units[]" value="{{ component.unit }}" maxlength="30"></label>
+                        <label>箱号/备注<input name="component_notes[]" value="{{ component.notes or '' }}" maxlength="500"></label>
+                        <button class="button small danger" type="button" data-remove-component>移除</button>
+                    </div>
+                {% endfor %}
+                </div>
+                <div class="actions"><button class="button small" type="button" data-add-component>添加元件</button><button class="button primary" type="submit">保存</button></div>
+            </form>
+            <form method="post" action="{{ url_for('parts.cabinet_delete', cabinet_id=cabinet.id) }}" data-confirm="删除柜子后历史申请会保留但解除柜子关联。确定继续吗？">
+                <button class="button small danger" type="submit">删除柜子</button>
+            </form>
+        </details>
+    {% else %}<p class="empty-cabinet-state">还没有柜子，先在上方创建一个柜子。</p>{% endfor %}
+    </div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/parts.js') }}" defer></script>{% endblock %}
