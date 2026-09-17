@@ -327,7 +327,7 @@ def _review_application(application_id, status, reason=None):
 @admin_required
 def approve_application(application_id):
     application = _review_application(application_id, "approved")
-    if application.cabinet:
+    if application.cabinet and not current_app.config.get("PARTS_SKIP_FACE_VERIFICATION"):
         delay = _setting_float("laser_delay")
         threading.Thread(
             target=_point_to_cabinet_safely,
@@ -907,7 +907,7 @@ def _point_to_cabinet_safely(cabinet_id, cabinet_number, delay):
 
 
 def _point_after_application(application):
-    if not application.cabinet:
+    if current_app.config.get("PARTS_SKIP_FACE_VERIFICATION") or not application.cabinet:
         return
     threading.Thread(
         target=_point_to_cabinet_safely,
