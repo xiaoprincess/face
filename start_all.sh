@@ -26,8 +26,16 @@ if [ ! -f "$mcp_root/.env" ]; then
   exit 1
 fi
 
+web_pid=""
+mcp_pid=""
+
 cleanup() {
-  kill "$web_pid" "$mcp_pid" 2>/dev/null || true
+  if [ -n "$web_pid" ]; then
+    kill "$web_pid" 2>/dev/null || true
+  fi
+  if [ -n "$mcp_pid" ]; then
+    kill "$mcp_pid" 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT INT TERM
 

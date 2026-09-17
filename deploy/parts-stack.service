@@ -1,0 +1,15 @@
+[Unit]
+Description=Xiaozhi parts website and MCP bridge
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/face
+ExecStart=%h/face/start_all.sh
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
