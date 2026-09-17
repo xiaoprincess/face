@@ -12,4 +12,5 @@ unified_web_app/instance/
 unified_web_app/static/uploads/
 parts_mcp_server/logs/
 raspberry_pi_web_snapshot/
+backups/
 *.zip
