@@ -700,6 +700,43 @@ def _hardware_ready_for_device_borrow():
     return "；".join(missing) or "树莓派硬件未就绪"
 
 
+def _run_borrow_without_face(component, quantity, request_id, source):
+    """Create a clearly marked pending request while camera verification is disabled."""
+
+    applicant_email = str(
+        current_app.config.get("PARTS_FALLBACK_APPLICANT_EMAIL")
+        or "xiaozhi-bot@local.test"
+    ).strip().lower()
+    user = User.query.filter_by(email=applicant_email).first()
+    if user is None:
+        return {
+            "success": False,
+            "message": "跳过人脸识别时使用的系统申请账号不存在。",
+        }, 503
+
+    try:
+        application = _create_application(
+            user.id,
+            [(component.component_name, str(quantity))],
+            f"[MCP 借用请求:{request_id}] [未进行人脸识别] 来源: {source}，摄像头暂不可用",
+            cabinet=component.cabinet,
+        )
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        logger.exception("创建免人脸识别借用申请失败")
+        return {"success": False, "message": "借用申请创建失败，请稍后重试。"}, 500
+
+    result = _borrow_result(application, request_id)
+    result.update(
+        {
+            "message": "借用申请已提交，等待管理员审批；本次未进行人脸识别。",
+            "face_verification": "skipped",
+        }
+    )
+    return result, 201
+
+
 def _run_device_borrow(component_id, quantity, request_id, source):
     """Use one camera/servo operation to authenticate a borrower and create one pending application."""
 
@@ -717,6 +754,9 @@ def _run_device_borrow(component_id, quantity, request_id, source):
             "available_quantity": component.quantity,
             "component_id": component.id,
         }, 409
+
+    if current_app.config.get("PARTS_SKIP_FACE_VERIFICATION"):
+        return _run_borrow_without_face(component, quantity, request_id, source)
 
     unavailable = _hardware_ready_for_device_borrow()
     if unavailable:

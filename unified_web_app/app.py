@@ -15,6 +15,13 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 
+def _env_flag(name, default=False):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _load_or_create_secret(instance_path):
     configured = os.environ.get("UNIFIED_SECRET_KEY", "").strip()
     if configured:
@@ -42,6 +49,10 @@ def create_app(test_config=None):
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
         PARTS_DEVICE_TOKEN=os.environ.get("PARTS_DEVICE_TOKEN", "").strip(),
+        PARTS_SKIP_FACE_VERIFICATION=_env_flag("PARTS_SKIP_FACE_VERIFICATION"),
+        PARTS_FALLBACK_APPLICANT_EMAIL=os.environ.get(
+            "PARTS_FALLBACK_APPLICANT_EMAIL", "xiaozhi-bot@local.test"
+        ).strip(),
         BAIDU_GROUP_ID=os.environ.get("BAIDU_GROUP_ID", "").strip(),
     )
     if test_config:
