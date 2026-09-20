@@ -285,6 +285,9 @@ def cancel_application(application_id):
 @parts_bp.route("/admin")
 @admin_required
 def admin_dashboard():
+    active_tab = request.args.get("tab", "applications").strip().lower()
+    if active_tab not in {"applications", "inventory", "create"}:
+        active_tab = "applications"
     query = PartApplication.query.order_by(
         case(
             (PartApplication.status == "pending", 1),
@@ -296,12 +299,22 @@ def admin_dashboard():
     )
     all_applications, counts = _application_counts(query)
     cabinets = Cabinet.query.order_by(Cabinet.cabinet_number).all()
+    component_count = sum(len(cabinet.components) for cabinet in cabinets)
+    low_stock_count = sum(
+        1
+        for cabinet in cabinets
+        for component in cabinet.components
+        if component.quantity <= 5
+    )
     settings = {key: _setting_float(key) for key in SETTING_RULES}
     return render_template(
         "parts/admin.html",
+        active_tab=active_tab,
         applications=all_applications,
         counts=counts,
         cabinets=cabinets,
+        component_count=component_count,
+        low_stock_count=low_stock_count,
         settings=settings,
         user_count=User.query.filter_by(role="user").count(),
         hardware_status=hardware.status(current_app.config),
@@ -335,7 +348,7 @@ def approve_application(application_id):
             daemon=True,
         ).start()
     flash("申请已批准", "success")
-    return redirect(url_for("parts.admin_dashboard"))
+    return redirect(url_for("parts.admin_dashboard", tab="applications"))
 
 
 @parts_bp.route("/admin/applications/<int:application_id>/reject", methods=["POST"])
@@ -345,10 +358,10 @@ def reject_application(application_id):
     reason = request.form.get("reject_reason", "").strip()
     if not reason:
         flash("请填写拒绝原因", "error")
-        return redirect(url_for("parts.admin_dashboard"))
+        return redirect(url_for("parts.admin_dashboard", tab="applications"))
     _review_application(application_id, "rejected", reason[:2000])
     flash("申请已拒绝", "success")
-    return redirect(url_for("parts.admin_dashboard"))
+    return redirect(url_for("parts.admin_dashboard", tab="applications"))
 
 
 def _component_rows():
@@ -386,10 +399,10 @@ def cabinet_create():
     equipment_name = request.form.get("equipment_name", "").strip()
     if not cabinet_number or not equipment_name:
         flash("柜号和器材分类不能为空", "error")
-        return redirect(url_for("parts.admin_dashboard"))
+        return redirect(url_for("parts.admin_dashboard", tab="create"))
     if Cabinet.query.filter_by(cabinet_number=cabinet_number).first():
         flash("柜号已存在", "error")
-        return redirect(url_for("parts.admin_dashboard"))
+        return redirect(url_for("parts.admin_dashboard", tab="create"))
     try:
         cabinet = Cabinet(
             cabinet_number=cabinet_number[:50],
@@ -400,10 +413,13 @@ def cabinet_create():
         db.session.add(cabinet)
         db.session.commit()
         flash("柜子已创建", "success")
+        return redirect(
+            url_for("parts.admin_dashboard", tab="inventory", _anchor=f"cabinet-{cabinet.id}")
+        )
     except ValueError as exc:
         db.session.rollback()
         flash(str(exc), "error")
-    return redirect(url_for("parts.admin_dashboard"))
+    return redirect(url_for("parts.admin_dashboard", tab="create"))
 
 
 @parts_bp.route("/admin/cabinets/<int:cabinet_id>/edit", methods=["POST"])
@@ -417,13 +433,17 @@ def cabinet_edit(cabinet_id):
     equipment_name = request.form.get("equipment_name", "").strip()
     if not cabinet_number or not equipment_name:
         flash("柜号和器材分类不能为空", "error")
-        return redirect(url_for("parts.admin_dashboard"))
+        return redirect(
+            url_for("parts.admin_dashboard", tab="inventory", _anchor=f"cabinet-{cabinet.id}")
+        )
     duplicate = Cabinet.query.filter(
         Cabinet.cabinet_number == cabinet_number, Cabinet.id != cabinet.id
     ).first()
     if duplicate:
         flash("柜号已存在", "error")
-        return redirect(url_for("parts.admin_dashboard"))
+        return redirect(
+            url_for("parts.admin_dashboard", tab="inventory", _anchor=f"cabinet-{cabinet.id}")
+        )
     try:
         cabinet.cabinet_number = cabinet_number[:50]
         cabinet.equipment_name = equipment_name[:200]
@@ -434,7 +454,9 @@ def cabinet_edit(cabinet_id):
     except ValueError as exc:
         db.session.rollback()
         flash(str(exc), "error")
-    return redirect(url_for("parts.admin_dashboard"))
+    return redirect(
+        url_for("parts.admin_dashboard", tab="inventory", _anchor=f"cabinet-{cabinet.id}")
+    )
 
 
 @parts_bp.route("/admin/cabinets/<int:cabinet_id>/delete", methods=["POST"])
@@ -448,7 +470,7 @@ def cabinet_delete(cabinet_id):
     db.session.delete(cabinet)
     db.session.commit()
     flash("柜子已删除，历史申请已保留", "success")
-    return redirect(url_for("parts.admin_dashboard"))
+    return redirect(url_for("parts.admin_dashboard", tab="inventory"))
 
 
 @parts_bp.route("/admin/cabinets/batch-delete", methods=["POST"])
@@ -470,7 +492,7 @@ def cabinet_batch_delete():
             db.session.delete(cabinet)
         db.session.commit()
         flash(f"已删除 {len(ids)} 个柜子，历史申请已保留", "success")
-    return redirect(url_for("parts.admin_dashboard"))
+    return redirect(url_for("parts.admin_dashboard", tab="inventory"))
 
 
 @parts_bp.route("/admin/settings", methods=["GET", "POST"])

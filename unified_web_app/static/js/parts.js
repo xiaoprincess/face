@@ -63,4 +63,20 @@
     });
 
     document.querySelectorAll("form[data-confirm]").forEach(bindConfirmation);
+
+    var inventorySearch = document.querySelector("[data-inventory-search]");
+    if (inventorySearch) {
+        var inventoryCards = Array.from(document.querySelectorAll("[data-cabinet-card]"));
+        var inventoryEmpty = document.querySelector("[data-inventory-empty]");
+        inventorySearch.addEventListener("input", function () {
+            var query = inventorySearch.value.trim().toLocaleLowerCase();
+            var visible = 0;
+            inventoryCards.forEach(function (card) {
+                var matches = !query || (card.dataset.search || "").toLocaleLowerCase().includes(query);
+                card.hidden = !matches;
+                if (matches) visible += 1;
+            });
+            if (inventoryEmpty) inventoryEmpty.hidden = visible !== 0;
+        });
+    }
 })();
