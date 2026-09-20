@@ -1,88 +1,33 @@
 {% extends "base.html" %}
 {% block title %}零件管家后台{% endblock %}
-{% block head %}
-<style>
-    .parts-admin-heading { display:flex; align-items:flex-end; justify-content:space-between; gap:24px; }
-    .parts-admin-heading .actions { margin:0 0 4px; }
-    .parts-stats { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:12px; margin:20px 0 24px; }
-    .parts-stat { min-width:0; background:white; border:1px solid var(--line); border-radius:16px; padding:16px 17px; box-shadow:var(--shadow-sm); }
-    .parts-stat strong { display:block; font-size:25px; margin-top:3px; color:#274476; }
-    .parts-stat.attention { background:#fffaf0; border-color:#f3dfb5; }
-    .parts-stat.attention strong { color:#b57413; }
-    .admin-tabs { display:flex; align-items:center; gap:7px; margin:0 0 22px; padding:6px; width:fit-content; max-width:100%; overflow-x:auto; border:1px solid #dce6f5; border-radius:16px; background:#fff; box-shadow:0 8px 24px rgba(48,83,139,.06); }
-    .admin-tabs a { display:flex; align-items:center; gap:9px; white-space:nowrap; padding:10px 17px; color:#71819a; border-radius:11px; font-size:13px; font-weight:650; }
-    .admin-tabs a:hover { color:#3464e4; background:#f2f6ff; }
-    .admin-tabs a.active { color:#285aca; background:#eaf0ff; }
-    .tab-count { display:inline-grid; place-items:center; min-width:22px; height:22px; padding:0 7px; border-radius:999px; background:#edf1f7; color:#73839b; font-size:11px; }
-    .admin-tabs a.active .tab-count { background:#fff; color:#3464e4; }
-    .admin-section { margin-top:0; }
-    .review-actions { display:flex; flex-wrap:wrap; gap:7px; }
-    .review-actions textarea { min-height:64px; min-width:190px; }
-    .inventory-toolbar { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:18px; }
-    .inventory-toolbar h2 { margin:0 0 3px; }
-    .inventory-actions { display:flex; align-items:center; gap:10px; }
-    .inventory-search { width:min(320px,42vw); min-height:40px; margin:0; }
-    .cabinet-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
-    .cabinet-card { scroll-margin-top:20px; border:1px solid #dfe7f3; border-radius:18px; padding:0; background:white; overflow:hidden; box-shadow:var(--shadow-sm); }
-    .cabinet-card:target { border-color:#6f91ec; box-shadow:0 0 0 4px #3464e414; }
-    .cabinet-head { display:flex; align-items:flex-start; justify-content:space-between; gap:15px; padding:20px; background:linear-gradient(145deg,#f8faff,#fff); border-bottom:1px solid #e8edf5; }
-    .cabinet-title { display:flex; align-items:center; gap:12px; min-width:0; }
-    .cabinet-number { display:grid; place-items:center; min-width:48px; height:48px; padding:0 9px; border-radius:14px; background:#e9f0ff; color:#3262d6; font-size:18px; font-weight:800; }
-    .cabinet-title h3 { margin:0; font-size:17px; }
-    .cabinet-title p { margin:3px 0 0; font-size:12px; }
-    .cabinet-total { white-space:nowrap; color:#6d7f99; background:#f0f4fa; border-radius:999px; padding:6px 10px; font-size:11px; }
-    .stock-list { display:grid; gap:0; padding:5px 20px 8px; }
-    .stock-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:15px; padding:13px 0; border-bottom:1px solid #edf1f7; }
-    .stock-row:last-child { border-bottom:0; }
-    .stock-name { min-width:0; color:#344966; font-weight:650; overflow-wrap:anywhere; }
-    .stock-note { display:block; margin-top:2px; color:#8a98ac; font-size:11px; font-weight:400; }
-    .stock-quantity { min-width:76px; text-align:right; color:#285ac7; font-size:15px; font-weight:800; }
-    .stock-quantity.low { color:#c57a18; }
-    .cabinet-edit { border-top:1px solid #e8edf5; }
-    .cabinet-edit>summary { cursor:pointer; list-style:none; padding:13px 20px; color:#61738f; background:#fbfcfe; font-size:12px; font-weight:650; }
-    .cabinet-edit>summary::-webkit-details-marker { display:none; }
-    .cabinet-edit>summary::after { content:'＋'; float:right; color:#8da0bd; }
-    .cabinet-edit[open]>summary::after { content:'－'; }
-    .cabinet-edit-form { padding:4px 20px 20px; }
-    .cabinet-delete { margin:0 20px 20px; }
-    .component-row { display:grid; grid-template-columns:minmax(0,1.5fr) 90px 80px minmax(0,1.2fr) auto; gap:8px; align-items:end; }
-    .component-row label { margin:7px 0; }
-    .create-panel { max-width:980px; }
-    .create-intro { display:flex; align-items:center; gap:14px; margin-bottom:20px; padding-bottom:18px; border-bottom:1px solid var(--line); }
-    .create-icon { display:grid; place-items:center; width:48px; height:48px; flex-shrink:0; border-radius:15px; background:#e9f0ff; color:#3464e4; font-size:25px; }
-    .create-intro h2 { margin:0 0 3px; }
-    .create-intro p { margin:0; font-size:12px; }
-    .empty-search-state { grid-column:1/-1; padding:40px; text-align:center; color:var(--muted); background:#fff; border:1px dashed #cfd9e8; border-radius:18px; }
-    .hardware-ok { color:#16623e; } .hardware-off { color:#922; }
-    @media(max-width:1100px) { .parts-stats { grid-template-columns:repeat(3,1fr); } }
-    @media(max-width:760px) { .parts-admin-heading { align-items:flex-start; flex-direction:column; } .parts-admin-heading .actions { margin:0; } .parts-stats,.cabinet-grid { grid-template-columns:1fr 1fr; } .inventory-toolbar { align-items:stretch; flex-direction:column; } .inventory-actions { align-items:stretch; flex-direction:column; } .inventory-search { width:100%; } .component-row { grid-template-columns:1fr; } }
-    @media(max-width:460px) { .parts-stats,.cabinet-grid { grid-template-columns:1fr; } }
-</style>
+{% block page_styles %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/parts-admin.css', v='20260920-1') }}">
 {% endblock %}
 {% block content %}
+{% from '_icons.html' import icon %}
 <section class="section-heading parts-admin-heading">
-    <div><span class="eyebrow">Admin · Parts keeper</span><h1>零件管家后台</h1><p class="muted">申请、柜子和库存分区管理，需要的内容一眼就能找到。</p></div>
-    <div class="actions"><a class="button" href="{{ url_for('parts.settings') }}">系统设置</a></div>
+    <div><span class="eyebrow">PARTS / WORKSPACE</span><h1>每个零件，都有位置<span class="greeting-dot">.</span></h1><p class="muted">管理你的零件收藏，让下一个想法随时开始。</p></div>
+    <div class="actions"><a class="button" href="{{ url_for('parts.settings') }}">系统设置</a><a class="button primary" href="{{ url_for('parts.admin_dashboard', tab='create') }}">{{ icon('plus') }}新增柜子</a></div>
 </section>
 
+{% if active_tab != 'create' %}
 <div class="parts-stats">
-    <div class="parts-stat attention"><span class="muted">待审批</span><strong>{{ counts.pending }}</strong></div>
-    <div class="parts-stat"><span class="muted">柜子</span><strong>{{ cabinets|length }}</strong></div>
-    <div class="parts-stat"><span class="muted">零件种类</span><strong>{{ component_count }}</strong></div>
-    <div class="parts-stat{% if low_stock_count %} attention{% endif %}"><span class="muted">低库存 ≤ 5</span><strong>{{ low_stock_count }}</strong></div>
-    <div class="parts-stat"><span class="muted">普通用户</span><strong>{{ user_count }}</strong></div>
-    <div class="parts-stat"><span class="muted">全部申请</span><strong>{{ counts.total }}</strong></div>
+    <a class="parts-stat stat-featured" href="{{ url_for('parts.admin_dashboard', tab='inventory') }}"><span class="stat-icon">{{ icon('box') }}</span><span>收纳柜子</span><strong>{{ cabinets|length }}<small>个</small></strong><span class="stat-caption">打开你的零件收藏 {{ icon('arrow') }}</span></a>
+    <a class="parts-stat" href="{{ url_for('parts.admin_dashboard', tab='inventory') }}"><span class="stat-icon">{{ icon('grid') }}</span><span class="muted">零件条目</span><strong>{{ component_count }}<small>项</small></strong><span class="stat-caption">柜内零件，一目了然</span></a>
+    <a class="parts-stat" href="{{ url_for('parts.admin_dashboard', tab='applications') }}"><span class="stat-icon">{{ icon('check') }}</span><span class="muted">等待审批</span><strong>{{ counts.pending }}<small>条</small></strong><span class="stat-caption">共 {{ counts.total }} 条借用记录</span></a>
+    <a class="parts-stat stat-warning" href="{{ url_for('parts.admin_dashboard', tab='inventory', stock='low') }}"><span class="stat-icon">{{ icon('alert') }}</span><span class="muted">留意库存</span><strong>{{ low_stock_count }}<small>项</small></strong><span class="stat-caption">数量 ≤ 5，点此查看</span></a>
 </div>
+{% endif %}
 
 <nav class="admin-tabs" aria-label="零件管家后台分区">
-    <a class="{% if active_tab == 'applications' %}active{% endif %}" href="{{ url_for('parts.admin_dashboard', tab='applications') }}">申请审批 <span class="tab-count">{{ counts.pending }}</span></a>
-    <a class="{% if active_tab == 'inventory' %}active{% endif %}" href="{{ url_for('parts.admin_dashboard', tab='inventory') }}">库存管理 <span class="tab-count">{{ component_count }}</span></a>
-    <a class="{% if active_tab == 'create' %}active{% endif %}" href="{{ url_for('parts.admin_dashboard', tab='create') }}">新增柜子 <span aria-hidden="true">＋</span></a>
+    <a class="{% if active_tab == 'inventory' %}active{% endif %}" {% if active_tab == 'inventory' %}aria-current="page"{% endif %} href="{{ url_for('parts.admin_dashboard', tab='inventory') }}">{{ icon('box') }}库存管理</a>
+    <a class="{% if active_tab == 'applications' %}active{% endif %}" {% if active_tab == 'applications' %}aria-current="page"{% endif %} href="{{ url_for('parts.admin_dashboard', tab='applications') }}">{{ icon('check') }}申请审批 <span class="tab-count">{{ counts.pending }}</span></a>
+    <a class="{% if active_tab == 'create' %}active{% endif %}" {% if active_tab == 'create' %}aria-current="page"{% endif %} href="{{ url_for('parts.admin_dashboard', tab='create') }}">{{ icon('plus') }}新增柜子</a>
 </nav>
 
 {% if active_tab == 'applications' %}
 <section class="panel admin-section">
-    <div class="toolbar"><div><h2>申请审批</h2><span class="meta">待审批优先显示</span></div></div>
+    <div class="toolbar"><div><h2>借用申请</h2><span class="meta">待审批优先显示 · 已批准 {{ counts.approved }} · 已拒绝 {{ counts.rejected }}</span></div></div>
     {% if applications %}
     <div class="table-wrap">
         <table>
@@ -100,10 +45,10 @@
                         {% if application.status == 'pending' %}
                         <div class="review-actions">
                             <form method="post" action="{{ url_for('parts.approve_application', application_id=application.id) }}"><button class="button small primary" type="submit">批准</button></form>
-                            <form method="post" action="{{ url_for('parts.reject_application', application_id=application.id) }}">
+                            <details class="reject-disclosure"><summary>拒绝申请</summary><form method="post" action="{{ url_for('parts.reject_application', application_id=application.id) }}">
                                 <textarea name="reject_reason" maxlength="2000" placeholder="拒绝原因" required></textarea>
                                 <button class="button small danger" type="submit">拒绝</button>
-                            </form>
+                            </form></details>
                         </div>
                         {% endif %}
                     </td>
@@ -119,10 +64,10 @@
     <div class="create-intro"><span class="create-icon" aria-hidden="true">＋</span><div><h2>新增柜子</h2><p class="muted">填写柜号和分类，并一次录入柜内已有零件。</p></div></div>
     <form method="post" action="{{ url_for('parts.cabinet_create') }}">
         <div class="two-column">
-            <label>柜号<input name="cabinet_number" maxlength="50" required></label>
-            <label>器材分类<input name="equipment_name" maxlength="200" required></label>
+            <label>柜号<input name="cabinet_number" maxlength="50" placeholder="例如：01" required></label>
+            <label>器材分类<input name="equipment_name" maxlength="200" placeholder="例如：传感器与模块" required></label>
         </div>
-        <label>说明<textarea name="description" maxlength="2000"></textarea></label>
+        <label>说明<textarea name="description" maxlength="2000" placeholder="位置、用途，或这个柜子的收纳习惯"></textarea></label>
         <h3>柜内元件</h3>
         <div data-component-list>
             <div class="component-row">
@@ -139,20 +84,20 @@
 {% else %}
 <section class="admin-section cabinet-section">
     <div class="inventory-toolbar">
-        <div><h2>柜子与元件</h2><span class="meta">共 {{ cabinets|length }} 个柜子、{{ component_count }} 种零件</span></div>
-        <div class="inventory-actions"><input class="inventory-search" type="search" placeholder="搜索柜号、零件或箱号" aria-label="搜索库存" data-inventory-search><a class="button primary" href="{{ url_for('parts.admin_dashboard', tab='create') }}">＋ 新增柜子</a></div>
+        <div><h2>我的零件柜</h2><span class="meta">共 {{ cabinets|length }} 个柜子 · 展开卡片即可编辑库存</span></div>
+        <div class="inventory-actions"><label class="inventory-search-wrap">{{ icon('search') }}<input class="inventory-search" type="search" placeholder="搜索零件、柜号、箱号…" aria-label="搜索库存" data-inventory-search></label><label class="stock-filter"><input type="checkbox" data-low-stock {% if request.args.get('stock') == 'low' %}checked{% endif %}>仅低库存</label></div>
     </div>
     <div class="cabinet-grid" data-cabinet-grid>
     {% for cabinet in cabinets %}
-        <article class="cabinet-card" id="cabinet-{{ cabinet.id }}" data-cabinet-card data-search="{{ cabinet.cabinet_number }} {{ cabinet.equipment_name }} {{ cabinet.description or '' }} {% for component in cabinet.components %}{{ component.component_name }} {{ component.notes or '' }} {% endfor %}">
-            <div class="cabinet-head"><div class="cabinet-title"><span class="cabinet-number">{{ cabinet.cabinet_number }}</span><div><h3>{{ cabinet.equipment_name }}</h3><p class="muted">{{ cabinet.description or '暂无柜子说明' }}</p></div></div><span class="cabinet-total">{{ cabinet.components|length }} 种零件</span></div>
+        <article class="cabinet-card" id="cabinet-{{ cabinet.id }}" data-cabinet-card data-search="{{ cabinet.cabinet_number }} {{ cabinet.equipment_name }} {{ cabinet.description or '' }}">
+            <div class="cabinet-head"><div class="cabinet-title"><span class="cabinet-number"><small>柜号</small>{{ cabinet.cabinet_number }}</span><div><h3>{{ cabinet.equipment_name }}</h3><p class="muted">{{ cabinet.description or '为每一份灵感，留一个位置' }}</p></div></div><span class="cabinet-total">{{ cabinet.components|length }} 项</span></div>
             <div class="stock-list">
             {% for component in cabinet.components %}
-                <div class="stock-row"><span class="stock-name">{{ component.component_name }}{% if component.notes %}<small class="stock-note">{{ component.notes }}</small>{% endif %}</span><span class="stock-quantity{% if component.quantity <= 5 %} low{% endif %}">{{ component.quantity }} {{ component.unit }}</span></div>
+                <div class="stock-row" data-stock-row data-low="{{ 'true' if component.quantity <= 5 else 'false' }}"><span class="stock-name">{{ component.component_name }}{% if component.notes %}<small class="stock-note">{{ component.notes }}</small>{% endif %}</span><span class="stock-quantity{% if component.quantity <= 5 %} low{% endif %}">{% if component.quantity <= 5 %}<small>余量偏低</small>{% endif %}{{ component.quantity }} <small>{{ component.unit }}</small></span></div>
             {% else %}<p class="muted">这个柜子还没有录入零件。</p>{% endfor %}
             </div>
             <details class="cabinet-edit">
-                <summary>编辑柜子与库存</summary>
+                <summary>{{ icon('edit') }} 编辑柜子与库存 <span aria-hidden="true">＋</span></summary>
                 <form class="cabinet-edit-form" method="post" action="{{ url_for('parts.cabinet_edit', cabinet_id=cabinet.id) }}">
                 <label>柜号<input name="cabinet_number" value="{{ cabinet.cabinet_number }}" maxlength="50" required></label>
                 <label>器材分类<input name="equipment_name" value="{{ cabinet.equipment_name }}" maxlength="200" required></label>
@@ -170,15 +115,16 @@
                 </div>
                 <div class="actions"><button class="button small" type="button" data-add-component>添加元件</button><button class="button primary" type="submit">保存</button></div>
                 </form>
-            </details>
             <form class="cabinet-delete" method="post" action="{{ url_for('parts.cabinet_delete', cabinet_id=cabinet.id) }}" data-confirm="删除柜子后历史申请会保留但解除柜子关联。确定继续吗？">
                 <button class="button small danger" type="submit">删除柜子</button>
             </form>
+            </details>
         </article>
     {% else %}<p class="empty-cabinet-state">还没有柜子，先在上方创建一个柜子。</p>{% endfor %}
-        <p class="empty-search-state" data-inventory-empty hidden>没有找到匹配的柜子或零件。</p>
+        <p class="empty-search-state" data-inventory-empty hidden>没有匹配的柜子或零件，试试其他关键词或关闭低库存筛选。</p>
+        <p class="inventory-result meta" data-inventory-result aria-live="polite"></p>
     </div>
 </section>
 {% endif %}
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', filename='js/parts.js') }}" defer></script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/parts.js', v='20260920-1') }}" defer></script>{% endblock %}

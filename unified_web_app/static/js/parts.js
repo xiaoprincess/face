@@ -68,15 +68,28 @@
     if (inventorySearch) {
         var inventoryCards = Array.from(document.querySelectorAll("[data-cabinet-card]"));
         var inventoryEmpty = document.querySelector("[data-inventory-empty]");
-        inventorySearch.addEventListener("input", function () {
+        var lowStock = document.querySelector("[data-low-stock]");
+        var resultCount = document.querySelector("[data-inventory-result]");
+        function filterInventory() {
             var query = inventorySearch.value.trim().toLocaleLowerCase();
             var visible = 0;
             inventoryCards.forEach(function (card) {
                 var matches = !query || (card.dataset.search || "").toLocaleLowerCase().includes(query);
+                var rows = Array.from(card.querySelectorAll("[data-stock-row]"));
+                rows.forEach(function (row) {
+                    var rowMatches = matches || row.textContent.toLocaleLowerCase().includes(query);
+                    row.hidden = !rowMatches || Boolean(lowStock && lowStock.checked && row.dataset.low !== "true");
+                });
+                matches = rows.some(function (row) { return !row.hidden; }) ||
+                    (rows.length === 0 && matches && (!lowStock || !lowStock.checked));
                 card.hidden = !matches;
                 if (matches) visible += 1;
             });
-            if (inventoryEmpty) inventoryEmpty.hidden = visible !== 0;
-        });
+            if (inventoryEmpty) inventoryEmpty.hidden = visible !== 0 || inventoryCards.length === 0;
+            if (resultCount) resultCount.textContent = "显示 " + visible + " / " + inventoryCards.length + " 个柜子";
+        }
+        inventorySearch.addEventListener("input", filterInventory);
+        if (lowStock) lowStock.addEventListener("change", filterInventory);
+        filterInventory();
     }
 })();
