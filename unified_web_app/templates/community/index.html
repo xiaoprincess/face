@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}社区 - 小智零件社区{% endblock %}
+{% block head %}{% include "community/_styles.html" %}{% endblock %}
+{% block content %}
+{% include "community/_nav.html" %}
+<section class="section-heading">
+    <p class="eyebrow">Community</p>
+    <h1>项目社区</h1>
+    <p class="muted">分享经验、讨论方案，并及时查看团队公告。</p>
+</section>
+<div class="community-grid">
+    <div class="stack">
+        <section class="community-card">
+            <h2>发布文章</h2>
+            <form class="compact-form" action="{{ url_for('community.create_post') }}" method="post">
+                <label>标题<input name="title" maxlength="200" required></label>
+                <label>正文<textarea name="content" maxlength="5000" required placeholder="可用 @用户名 提醒成员"></textarea></label>
+                <button class="button primary" type="submit">发布</button>
+            </form>
+        </section>
+        {% for post in posts.items %}
+            <article class="community-card">
+                <p class="meta">{{ post.author.username }} · {{ post.created_at.strftime('%Y-%m-%d %H:%M') }} · {{ post.views }} 次浏览</p>
+                <h2><a href="{{ url_for('community.post_detail', post_id=post.id) }}">{{ post.title }}</a></h2>
+                <p class="post-body">{{ post.content[:260] }}{% if post.content|length > 260 %}…{% endif %}</p>
+                <a href="{{ url_for('community.post_detail', post_id=post.id) }}">查看讨论</a>
+            </article>
+        {% else %}
+            <div class="community-card muted">还没有文章，来发布第一篇吧。</div>
+        {% endfor %}
+        {% if posts.pages > 1 %}
+            <div class="row-actions">
+                {% if posts.has_prev %}<a class="button small" href="{{ url_for('community.index', page=posts.prev_num) }}">上一页</a>{% endif %}
+                <span class="meta">第 {{ posts.page }} / {{ posts.pages }} 页</span>
+                {% if posts.has_next %}<a class="button small" href="{{ url_for('community.index', page=posts.next_num) }}">下一页</a>{% endif %}
+            </div>
+        {% endif %}
+    </div>
+    <aside class="community-card announcement-card">
+        <h2>📢 最新公告</h2>
+        <ul class="plain-list">
+            {% for item in announcements %}
+                <li><strong>{{ item.title }}</strong><p class="post-body">{{ item.content }}</p><span class="meta">{{ item.author.username }} · {{ item.created_at.strftime('%m-%d %H:%M') }}</span></li>
+            {% else %}<li class="muted">暂无公告</li>{% endfor %}
+        </ul>
+    </aside>
+</div>
+{% endblock %}

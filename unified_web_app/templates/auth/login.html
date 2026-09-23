@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}登录 - 小智零件社区{% endblock %}
+{% block content %}
+<div class="auth-layout">
+<aside class="auth-story"><p class="eyebrow">WELCOME TO YOUR WORKSPACE</p><h2>每一个好想法，<br>都值得被实现<span>.</span></h2><p>零件有位置，资料有归处。<br>和你的伙伴，一起把灵感变成作品。</p><div class="auth-art" aria-hidden="true"><span>✳</span><span>＋</span><span>▦</span></div><div class="auth-story-bottom">零件管理 / 项目社区 / 即时协作</div></aside>
+<section class="auth-card">
+    <p class="eyebrow">很高兴再次见到你</p><h1>欢迎回来</h1><p class="auth-intro">登录账号，继续你的创造之旅。</p>
+    <form method="post">
+        <div class="form-group">
+            <label for="identity">用户名或邮箱</label>
+            <input id="identity" type="text" name="identity" class="form-control" placeholder="输入用户名或邮箱" required autocomplete="username">
+        </div>
+        <div class="form-group">
+            <label for="password">密码</label>
+            <input id="password" type="password" name="password" class="form-control" placeholder="输入密码" required autocomplete="current-password">
+        </div>
+        <label class="check"><input type="checkbox" name="remember"> 保持登录</label>
+        <button class="button primary" type="submit">进入工作台 →</button>
+    </form>
+    <p class="muted">还没有账号？<a href="{{ url_for('auth.register') }}">立即注册</a></p>
+</section>
+</div>
+{% endblock %}

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}公告管理 - 社区{% endblock %}
+{% block head %}{% include "community/_styles.html" %}{% endblock %}
+{% block content %}
+{% include "community/_nav.html" %}
+<section class="section-heading"><h1>公告管理</h1></section>
+{% if current_user.is_admin %}
+<div class="community-grid">
+    <section class="community-card">
+        <h2>发布公告</h2>
+        <form class="compact-form" action="{{ url_for('community.create_announcement') }}" method="post">
+            <label>标题<input name="title" maxlength="200" required></label>
+            <label>内容<textarea name="content" maxlength="5000" required></textarea></label>
+            <button class="button primary" type="submit">发布</button>
+        </form>
+    </section>
+    <section class="community-card">
+        <h2>全部公告</h2>
+        <ul class="plain-list">
+        {% for item in announcements %}
+            <li><strong>{{ item.title }}</strong> <span class="badge">{{ '显示中' if item.is_active else '已隐藏' }}</span>
+                <p class="post-body">{{ item.content }}</p>
+                <div class="row-actions">
+                    <form action="{{ url_for('community.toggle_announcement', announcement_id=item.id) }}" method="post"><button class="button small" type="submit">{{ '隐藏' if item.is_active else '显示' }}</button></form>
+                    <form action="{{ url_for('community.delete_announcement', announcement_id=item.id) }}" method="post"><button class="button danger small" type="submit">删除</button></form>
+                </div>
+            </li>
+        {% else %}<li class="muted">暂无公告</li>{% endfor %}
+        </ul>
+    </section>
+</div>
+{% else %}<div class="community-card">只有管理员可以管理公告。</div>{% endif %}
+{% endblock %}

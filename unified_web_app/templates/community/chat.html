@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}私聊 - 社区{% endblock %}
+{% block head %}{% include "community/_styles.html" %}{% endblock %}
+{% block content %}
+{% include "community/_nav.html" %}
+<section class="section-heading chat-page-heading"><div><p class="eyebrow">PRIVATE MESSAGES</p><h1>实时私聊</h1><p class="muted">和项目成员保持清晰、及时的沟通。</p></div><span class="live-pill"><i></i> 实时同步</span></section>
+<div class="community-card chat-layout" data-community-chat data-current-user="{{ current_user.id }}" data-selected-user="{{ selected.id if selected else '' }}" data-messages-url="{{ url_for('community.private_messages', user_id=0) }}" data-read-url="{{ url_for('community.mark_private_messages_read', user_id=0) }}" data-send-url="{{ url_for('community.send_private_message', user_id=0) }}" data-unread-url="{{ url_for('community.unread_counts') }}">
+    <aside class="contact-list">
+        <header class="contact-list-head"><div><p class="eyebrow">TEAM</p><h2>联系人</h2></div><span class="member-count">{{ users|length }}</span></header>
+        <p class="contact-list-hint">选择成员查看对话</p>
+        {% for user in users %}
+            <a class="contact{% if selected and selected.id == user.id %} active{% endif %}" href="{{ url_for('community.chat', user=user.id) }}" data-user-id="{{ user.id }}">
+                <span class="contact-avatar">{{ user.username[0]|upper }}</span>
+                <span class="contact-info"><span class="contact-name">{{ user.username }}</span><span class="contact-state"><i class="online-dot"></i>成员</span></span>
+                <span class="unread" hidden>0</span>
+            </a>
+        {% else %}<p class="muted">暂无其他成员</p>{% endfor %}
+    </aside>
+    <section class="conversation">
+        <header class="conversation-head">
+            <span class="conversation-avatar">{% if selected %}{{ selected.username[0]|upper }}{% else %}…{% endif %}</span>
+            <div class="conversation-title-wrap"><h2 id="conversation-title">{% if selected %}{{ selected.username }}{% else %}选择一位成员{% endif %}</h2><p class="muted">{% if selected %}<i class="online-dot"></i> 可以开始对话{% else %}左侧会显示站点成员{% endif %}</p></div>
+            <span class="connection-state" data-connection-state><i></i><span>连接中</span></span>
+        </header>
+        {% if not selected %}<div class="chat-empty"><div><span class="chat-empty-icon">💬</span><strong>选择一个用户开始聊天</strong><p>消息会实时显示在这里</p></div></div>{% endif %}
+        <div class="message-list" id="private-messages" aria-live="polite" {% if not selected %}hidden{% endif %}><div class="message-list-empty" data-message-empty hidden><span>✦</span><strong>还没有消息</strong><p>发送第一条消息，开始交流吧</p></div></div>
+        <form class="send-row" id="private-message-form" {% if not selected %}hidden{% endif %}>
+            <textarea id="private-message-input" rows="1" maxlength="5000" autocomplete="off" placeholder="输入消息，按 Enter 发送，Shift + Enter 换行" {% if not selected %}disabled{% endif %} required></textarea>
+            <button class="button primary send-button" type="submit" {% if not selected %}disabled{% endif %}><span>发送</span><kbd>↵</kbd></button>
+        </form>
+    </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js" crossorigin="anonymous"></script>
+<script src="{{ url_for('static', filename='js/community.js', v='20260914-ui4') }}"></script>
+{% endblock %}

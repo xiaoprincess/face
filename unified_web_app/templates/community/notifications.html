@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}通知 - 社区{% endblock %}
+{% block head %}{% include "community/_styles.html" %}{% endblock %}
+{% block content %}
+{% include "community/_nav.html" %}
+<div class="toolbar notification-toolbar"><div><p class="eyebrow">INBOX</p><h1>通知</h1><p class="muted">查看与你相关的消息、回复和提醒。</p></div><form action="{{ url_for('community.read_all_notifications') }}" method="post"><button class="button small" type="submit" {% if not notifications %}disabled{% endif %}>全部标为已读</button></form></div>
+<section class="community-card notification-card">
+    <ul class="plain-list">
+    {% for item in notifications %}
+        {% set type_labels = {'message': '私聊消息', 'reply': '评论回复', 'mention': '提及提醒'} %}
+        <li class="notification-item{% if not item.is_read %} is-unread{% endif %}">
+            <span class="notification-icon" aria-hidden="true">{% if item.type == 'message' %}✉{% elif item.type == 'reply' %}↩{% else %}@{% endif %}</span>
+            <div class="notification-copy">
+                <span class="badge">{{ type_labels.get(item.type, '系统通知') }}</span>
+                {% if not item.is_read %}<span class="notification-unread"><i></i>未读</span>{% endif %}
+                <div>{% if item.link %}<a href="{{ item.link }}">{{ item.content }}</a>{% else %}{{ item.content }}{% endif %}</div>
+                <div class="meta">{{ item.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+            </div>
+        </li>
+    {% else %}<li class="muted">暂无通知</li>{% endfor %}
+    </ul>
+</section>
+{% endblock %}

@@ -1,0 +1,4 @@
+fastmcp>=2.13,<3
+websockets>=15,<16
+python-dotenv>=1,<2
+openpyxl>=3.1,<4
