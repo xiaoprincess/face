@@ -3,27 +3,28 @@
 {% block head %}{% include "community/_styles.html" %}{% endblock %}
 {% block content %}
 {% include "community/_nav.html" %}
-<section class="section-heading">
+<section class="section-heading bento-community-heading">
     <p class="eyebrow">Community</p>
-    <h1>项目社区</h1>
+    <h1>今天，造点<span>有意思的。</span></h1>
     <p class="muted">分享经验、讨论方案，并及时查看团队公告。</p>
 </section>
 <div class="community-grid">
     <div class="stack">
-        <section class="community-card">
-            <h2>发布文章</h2>
+        <details class="community-card bento-compose">
+            <summary><span><strong>最近在做什么？</strong><small>分享一次进展，或者一个刚冒出来的想法。</small></span><span class="bento-compose-plus" aria-hidden="true">＋</span></summary>
             <form class="compact-form" action="{{ url_for('community.create_post') }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <label>标题<input name="title" maxlength="200" required></label>
                 <label>正文<textarea name="content" maxlength="5000" required placeholder="可用 @用户名 提醒成员"></textarea></label>
                 <button class="button primary" type="submit">发布</button>
             </form>
-        </section>
+        </details>
         {% for post in posts.items %}
-            <article class="community-card">
+            <article class="community-card bento-post">
                 <p class="meta">{{ post.author.username }} · {{ post.created_at.strftime('%Y-%m-%d %H:%M') }} · {{ post.views }} 次浏览</p>
                 <h2><a href="{{ url_for('community.post_detail', post_id=post.id) }}">{{ post.title }}</a></h2>
                 <p class="post-body">{{ post.content[:260] }}{% if post.content|length > 260 %}…{% endif %}</p>
-                <a href="{{ url_for('community.post_detail', post_id=post.id) }}">查看讨论</a>
+                <a class="bento-post-link" href="{{ url_for('community.post_detail', post_id=post.id) }}">进入讨论 <span aria-hidden="true">↗</span></a>
             </article>
         {% else %}
             <div class="community-card muted">还没有文章，来发布第一篇吧。</div>

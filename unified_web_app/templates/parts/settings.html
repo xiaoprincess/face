@@ -11,6 +11,7 @@
     <section class="panel">
         <h2>运行参数</h2>
         <form method="post" action="{{ url_for('parts.settings') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <label>激光指示时长（秒）<input type="number" name="laser_delay" min="0" max="60" step="0.1" value="{{ settings.laser_delay }}" required></label>
             <label>人脸识别水平角度（°）<input type="number" name="face_pan_angle" min="-180" max="180" step="0.5" value="{{ settings.face_pan_angle }}" required></label>
             <label>人脸识别俯仰角度（°）<input type="number" name="face_tilt_angle" min="-180" max="180" step="0.5" value="{{ settings.face_tilt_angle }}" required></label>

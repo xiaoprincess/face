@@ -1,5 +1,8 @@
+import base64
+import binascii
 import json
 import logging
+import re
 import secrets
 import threading
 import uuid
@@ -20,7 +23,6 @@ from flask import (
     url_for,
 )
 from flask_login import current_user, login_required, login_user
-from sqlalchemy import case
 from werkzeug.utils import secure_filename
 
 from core_models import User
@@ -69,6 +71,24 @@ def _group_id():
     ).strip() or "equipment_users"
 
 
+def _validated_face_data_url(value):
+    value = str(value or "").strip()
+    match = re.fullmatch(r"data:image/jpeg;base64,([A-Za-z0-9+/=]+)", value)
+    if not match:
+        raise ValueError("请先使用当前电脑的摄像头拍摄 JPEG 照片")
+    try:
+        image_bytes = base64.b64decode(match.group(1), validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("摄像头照片格式无效，请重新拍摄") from exc
+    if len(image_bytes) < 1024:
+        raise ValueError("摄像头照片内容不完整，请重新拍摄")
+    if len(image_bytes) > 5 * 1024 * 1024:
+        raise ValueError("摄像头照片不能超过 5 MB")
+    if not image_bytes.startswith(b"\xff\xd8\xff"):
+        raise ValueError("摄像头照片不是有效的 JPEG 图片，请重新拍摄")
+    return value
+
+
 def _parse_expected_date(raw_value):
     raw_value = (raw_value or "").strip()
     if not raw_value:
@@ -101,7 +121,7 @@ def _form_items():
     if not items:
         raise ValueError("请至少填写一种器材")
     if len(items) > 20:
-        raise ValueError("单次申请最多包含 20 种器材")
+        raise ValueError("单次借用登记最多包含 20 种器材")
     return items
 
 
@@ -179,7 +199,7 @@ def _create_application(user_id, items, purpose, expected_date=None, cabinet=Non
         purpose=purpose,
         expected_date=expected_date,
         cabinet=cabinet,
-        status="pending",
+        status="approved",  # Legacy DB value for a completed, directly recorded loan.
     )
     db.session.add(application)
     db.session.flush()
@@ -188,9 +208,10 @@ def _create_application(user_id, items, purpose, expected_date=None, cabinet=Non
 
 def _application_counts(query):
     applications = query.all()
-    counts = {status: 0 for status in ("pending", "approved", "rejected", "cancelled")}
+    counts = {"recorded": 0, "historical": 0}
     for application in applications:
-        counts[application.status] = counts.get(application.status, 0) + 1
+        key = "recorded" if application.record_status == "recorded" else "historical"
+        counts[key] += 1
     counts["total"] = len(applications)
     return applications, counts
 
@@ -204,6 +225,7 @@ def index():
 
 
 @parts_bp.route("/applications", methods=["GET"])
+@parts_bp.route("/records", methods=["GET"])
 @login_required
 def applications():
     query = PartApplication.query.filter_by(user_id=current_user.id).order_by(
@@ -221,6 +243,7 @@ def applications():
 
 @parts_bp.route("/applications", methods=["POST"])
 @parts_bp.route("/apply", methods=["POST"])
+@parts_bp.route("/records", methods=["POST"])
 @login_required
 def apply_equipment():
     saved_photos = []
@@ -228,9 +251,9 @@ def apply_equipment():
         items = _form_items()
         purpose = request.form.get("purpose", "").strip()
         if not purpose:
-            raise ValueError("请填写申请用途")
+            raise ValueError("请填写借用用途")
         if len(purpose) > 2000:
-            raise ValueError("申请用途不能超过 2000 个字符")
+            raise ValueError("借用用途不能超过 2000 个字符")
 
         cabinet = None
         cabinet_id = request.form.get("cabinet_id", "").strip()
@@ -252,7 +275,7 @@ def apply_equipment():
             photos=saved_photos,
         )
         db.session.commit()
-        flash("器材申请已提交", "success")
+        flash("借用记录已保存，无需审批", "success")
     except ValueError as exc:
         db.session.rollback()
         for filename in saved_photos:
@@ -262,40 +285,22 @@ def apply_equipment():
         db.session.rollback()
         for filename in saved_photos:
             (_upload_directory() / filename).unlink(missing_ok=True)
-        logger.exception("提交器材申请失败")
+        logger.exception("保存借用记录失败")
         flash("提交失败，请稍后重试", "error")
-    return redirect(url_for("parts.applications"))
-
-
-@parts_bp.route("/applications/<int:application_id>/cancel", methods=["POST"])
-@login_required
-def cancel_application(application_id):
-    application = PartApplication.query.filter_by(
-        id=application_id, user_id=current_user.id
-    ).first_or_404()
-    if application.status != "pending":
-        abort(409, description="只能取消待审批申请")
-    application.status = "cancelled"
-    application.updated_at = utc_now()
-    db.session.commit()
-    flash("申请已取消", "success")
     return redirect(url_for("parts.applications"))
 
 
 @parts_bp.route("/admin")
 @admin_required
 def admin_dashboard():
-    active_tab = request.args.get("tab", "applications").strip().lower()
-    if active_tab not in {"applications", "inventory", "create"}:
-        active_tab = "applications"
+    active_tab = request.args.get("tab", "inventory").strip().lower()
+    if active_tab == "applications":  # Existing bookmarks remain valid.
+        active_tab = "records"
+    if active_tab not in {"records", "inventory", "create"}:
+        active_tab = "inventory"
     query = PartApplication.query.order_by(
-        case(
-            (PartApplication.status == "pending", 1),
-            (PartApplication.status == "approved", 2),
-            (PartApplication.status == "rejected", 3),
-            else_=4,
-        ),
         PartApplication.created_at.desc(),
+        PartApplication.id.desc(),
     )
     all_applications, counts = _application_counts(query)
     cabinets = Cabinet.query.order_by(Cabinet.cabinet_number).all()
@@ -319,49 +324,6 @@ def admin_dashboard():
         user_count=User.query.filter_by(role="user").count(),
         hardware_status=hardware.status(current_app.config),
     )
-
-
-def _review_application(application_id, status, reason=None):
-    application = db.session.get(PartApplication, application_id)
-    if application is None:
-        abort(404)
-    if application.status != "pending":
-        abort(409, description="该申请已处理")
-    application.status = status
-    application.reject_reason = reason if status == "rejected" else None
-    application.reviewed_by_id = current_user.id
-    application.reviewed_at = utc_now()
-    db.session.commit()
-    return application
-
-
-@parts_bp.route("/admin/applications/<int:application_id>/approve", methods=["POST"])
-@parts_bp.route("/approve/<int:application_id>", methods=["POST"])
-@admin_required
-def approve_application(application_id):
-    application = _review_application(application_id, "approved")
-    if application.cabinet and not current_app.config.get("PARTS_SKIP_FACE_VERIFICATION"):
-        delay = _setting_float("laser_delay")
-        threading.Thread(
-            target=_point_to_cabinet_safely,
-            args=(application.cabinet.id, application.cabinet.cabinet_number, delay),
-            daemon=True,
-        ).start()
-    flash("申请已批准", "success")
-    return redirect(url_for("parts.admin_dashboard", tab="applications"))
-
-
-@parts_bp.route("/admin/applications/<int:application_id>/reject", methods=["POST"])
-@parts_bp.route("/reject/<int:application_id>", methods=["POST"])
-@admin_required
-def reject_application(application_id):
-    reason = request.form.get("reject_reason", "").strip()
-    if not reason:
-        flash("请填写拒绝原因", "error")
-        return redirect(url_for("parts.admin_dashboard", tab="applications"))
-    _review_application(application_id, "rejected", reason[:2000])
-    flash("申请已拒绝", "success")
-    return redirect(url_for("parts.admin_dashboard", tab="applications"))
 
 
 def _component_rows():
@@ -469,7 +431,7 @@ def cabinet_delete(cabinet_id):
     PartApplication.query.filter_by(cabinet_id=cabinet.id).update({"cabinet_id": None})
     db.session.delete(cabinet)
     db.session.commit()
-    flash("柜子已删除，历史申请已保留", "success")
+    flash("柜子已删除，历史借用记录已保留", "success")
     return redirect(url_for("parts.admin_dashboard", tab="inventory"))
 
 
@@ -491,7 +453,7 @@ def cabinet_batch_delete():
         for cabinet in Cabinet.query.filter(Cabinet.id.in_(ids)).all():
             db.session.delete(cabinet)
         db.session.commit()
-        flash(f"已删除 {len(ids)} 个柜子，历史申请已保留", "success")
+        flash(f"已删除 {len(ids)} 个柜子，历史借用记录已保留", "success")
     return redirect(url_for("parts.admin_dashboard", tab="inventory"))
 
 
@@ -567,10 +529,7 @@ def uploaded_file(filename):
 @parts_bp.route("/api/hardware/status")
 def hardware_status():
     status = hardware.status(current_app.config)
-    status["device_auth_configured"] = bool(
-        current_app.config.get("PARTS_DEVICE_TOKEN")
-        or __import__("os").environ.get("PARTS_DEVICE_TOKEN")
-    )
+    status["device_auth_configured"] = _device_token_configured()
     return jsonify(status), 200 if status["available"] else 503
 
 
@@ -598,9 +557,15 @@ def _face_result(image):
 @parts_bp.route("/api/face/login", methods=["POST"])
 def face_login_api():
     data = request.get_json(silent=True) or {}
+    if {"user_id", "capture", "replace"}.intersection(data):
+        return jsonify({"success": False, "message": "人脸登录不允许指定账号或服务器摄像头"}), 400
     try:
-        matched, message = _face_result(data.get("image", ""))
-    except (HardwareUnavailable, ValueError) as exc:
+        image = _validated_face_data_url(data.get("image"))
+    except ValueError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 400
+    try:
+        matched, message = _face_result(image)
+    except HardwareUnavailable as exc:
         return jsonify({"success": False, "available": False, "message": str(exc)}), 503
     except Exception:
         logger.exception("人脸登录失败")
@@ -608,24 +573,46 @@ def face_login_api():
     if not matched:
         return jsonify({"success": False, "message": message}), 401
     user, score = matched
+    if not user.face_registered:
+        return jsonify({"success": False, "message": "该账号尚未完成人脸录入"}), 401
+    user.last_seen = utc_now()
+    db.session.commit()
     login_user(user)
     return jsonify(
         {
             "success": True,
             "message": f"欢迎 {user.username}",
             "score": score,
-            "redirect": url_for("parts.index"),
+            "redirect": url_for("dashboard"),
         }
     )
+
+
+@parts_bp.get("/face")
+@login_required
+def face_enrollment():
+    return render_template("parts/face.html")
 
 
 @parts_bp.route("/api/face/register", methods=["POST"])
 @login_required
 def face_register_api():
     data = request.get_json(silent=True) or {}
+    forbidden_fields = {"user_id", "replace", "capture"}.intersection(data)
+    if forbidden_fields:
+        return jsonify({"success": False, "message": "不允许指定账号、更新方式或服务器摄像头"}), 400
+    password = str(data.get("password") or "")
+    if not password or not current_user.check_password(password):
+        return jsonify({"success": False, "message": "当前密码不正确"}), 403
     try:
+        image = _validated_face_data_url(data.get("image"))
+        replacing = bool(current_user.face_registered)
         result = hardware.register_face(
-            current_user.id, data.get("image", ""), current_app.config, _group_id()
+            current_user.id,
+            image,
+            current_app.config,
+            _group_id(),
+            replace=replacing,
         )
     except (HardwareUnavailable, ValueError) as exc:
         return jsonify({"success": False, "available": False, "message": str(exc)}), 503
@@ -636,33 +623,27 @@ def face_register_api():
         return jsonify({"success": False, "message": result.get("error_msg", "注册失败")}), 502
     current_user.face_registered = True
     db.session.commit()
-    return jsonify({"success": True, "message": "人脸注册成功"})
+    return jsonify(
+        {
+            "success": True,
+            "registered": True,
+            "message": "人脸信息已更新" if replacing else "人脸注册成功",
+        }
+    )
 
 
 def _device_authorized():
-    import os
-
-    expected = str(
-        current_app.config.get("PARTS_DEVICE_TOKEN")
-        or os.environ.get("PARTS_DEVICE_TOKEN", "")
-    )
+    expected = str(current_app.config.get("PARTS_DEVICE_TOKEN") or "").strip()
     if not expected:
-        return True
+        return False
     supplied = request.headers.get("X-Device-Token", "")
     if not supplied and request.headers.get("Authorization", "").startswith("Bearer "):
         supplied = request.headers["Authorization"][7:]
-    return secrets.compare_digest(expected, supplied)
+    return secrets.compare_digest(expected.encode("utf-8"), supplied.encode("utf-8"))
 
 
 def _device_token_configured():
-    import os
-
-    return bool(
-        str(
-            current_app.config.get("PARTS_DEVICE_TOKEN")
-            or os.environ.get("PARTS_DEVICE_TOKEN", "")
-        ).strip()
-    )
+    return bool(str(current_app.config.get("PARTS_DEVICE_TOKEN") or "").strip())
 
 
 def _parse_borrow_quantity(raw_value):
@@ -687,11 +668,12 @@ def _parse_borrow_request_id(raw_value):
 def _borrow_result(application, request_id, score=None, duplicate=False):
     result = {
         "success": True,
-        "message": "借用申请已提交，等待管理员审批。",
+        "message": "借用已登记，无需审批。",
+        "record_id": application.id,
         "application_id": application.id,
         "request_id": request_id,
         "username": application.applicant.username if application.applicant else "",
-        "status": application.status,
+        "status": application.record_status,
         "items": application.equipment_items,
         "cabinet_number": application.cabinet.cabinet_number if application.cabinet else "",
         "duplicate": duplicate,
@@ -723,7 +705,7 @@ def _hardware_ready_for_device_borrow():
 
 
 def _run_borrow_without_face(component, quantity, request_id, source):
-    """Create a clearly marked pending request while camera verification is disabled."""
+    """Record a loan with an explicit unverified marker while the camera is disabled."""
 
     applicant_email = str(
         current_app.config.get("PARTS_FALLBACK_APPLICANT_EMAIL")
@@ -733,7 +715,7 @@ def _run_borrow_without_face(component, quantity, request_id, source):
     if user is None:
         return {
             "success": False,
-            "message": "跳过人脸识别时使用的系统申请账号不存在。",
+            "message": "跳过人脸识别时使用的系统借用账号不存在。",
         }, 503
 
     try:
@@ -746,13 +728,13 @@ def _run_borrow_without_face(component, quantity, request_id, source):
         db.session.commit()
     except Exception:
         db.session.rollback()
-        logger.exception("创建免人脸识别借用申请失败")
-        return {"success": False, "message": "借用申请创建失败，请稍后重试。"}, 500
+        logger.exception("创建免人脸识别借用记录失败")
+        return {"success": False, "message": "借用记录创建失败，请稍后重试。"}, 500
 
     result = _borrow_result(application, request_id)
     result.update(
         {
-            "message": "借用申请已提交，等待管理员审批；本次未进行人脸识别。",
+            "message": "借用已登记，无需审批；本次未进行人脸识别。",
             "face_verification": "skipped",
         }
     )
@@ -760,10 +742,19 @@ def _run_borrow_without_face(component, quantity, request_id, source):
 
 
 def _run_device_borrow(component_id, quantity, request_id, source):
-    """Use one camera/servo operation to authenticate a borrower and create one pending application."""
+    """Authenticate a borrower and directly record one loan, without an approval step."""
 
     existing = _existing_borrow_request(request_id)
     if existing is not None:
+        if existing.record_status != "recorded":
+            return {
+                "success": False,
+                "message": "该请求编号属于历史未完成记录，请重新发起借用登记。",
+                "record_id": existing.id,
+                "application_id": existing.id,
+                "status": existing.record_status,
+                "duplicate": True,
+            }, 409
         return _borrow_result(existing, request_id, duplicate=True), 200
 
     component = db.session.get(CabinetComponent, component_id)
@@ -796,7 +787,7 @@ def _run_device_borrow(component_id, quantity, request_id, source):
         application = _create_application(
             user.id,
             [(component.component_name, str(quantity))],
-            f"[MCP 借用请求:{request_id}] [人脸识别自动借用申请] 来源: {source}，匹配分数: {score:.1f}",
+            f"[MCP 借用请求:{request_id}] [人脸识别借用登记] 来源: {source}，匹配分数: {score:.1f}",
             cabinet=component.cabinet,
         )
         db.session.commit()
@@ -806,8 +797,8 @@ def _run_device_borrow(component_id, quantity, request_id, source):
         return {"success": False, "message": str(exc)}, 503
     except Exception:
         db.session.rollback()
-        logger.exception("处理 MCP 借用申请失败")
-        return {"success": False, "message": "借用申请处理失败，请稍后重试。"}, 500
+        logger.exception("处理 MCP 借用登记失败")
+        return {"success": False, "message": "借用登记失败，请稍后重试。"}, 500
 
     _point_after_application(application)
     return result, 201
@@ -815,7 +806,7 @@ def _run_device_borrow(component_id, quantity, request_id, source):
 
 @parts_bp.route("/api/device/borrow", methods=["POST"])
 def device_borrow_api():
-    """MCP-only borrow endpoint: exact component, quantity, face verification and pending application."""
+    """MCP borrow endpoint: exact component, quantity, face verification and direct recording."""
 
     if not _device_token_configured():
         return jsonify({"success": False, "message": "借用接口未配置 PARTS_DEVICE_TOKEN"}), 503
@@ -858,7 +849,7 @@ def face_verify_api():
     application = _create_application(
         user.id,
         [(equipment_name[:200], str(data.get("quantity", "1"))[:30] or "1")],
-        f"[人脸验证自动申请] 匹配分数: {score:.1f}",
+        f"[人脸验证借用登记] 匹配分数: {score:.1f}",
     )
     db.session.commit()
     _point_after_application(application)
@@ -868,6 +859,8 @@ def face_verify_api():
             "username": user.username,
             "score": score,
             "application_id": application.id,
+            "record_id": application.id,
+            "status": application.record_status,
             "equipment": equipment_name,
         }
     )
@@ -894,15 +887,17 @@ def face_apply_api():
     application = _create_application(
         user.id,
         [(equipment_name[:200], quantity)],
-        f"[人脸识别自动申请] 来自 {device}，匹配分数: {score}",
+        f"[人脸识别借用登记] 来自 {device}，匹配分数: {score}",
     )
     db.session.commit()
     _point_after_application(application)
     return jsonify(
         {
             "success": True,
-            "message": f"已为 {user.username} 创建申请",
+            "message": f"已为 {user.username} 登记借用记录，无需审批",
             "application_id": application.id,
+            "record_id": application.id,
+            "status": application.record_status,
             "equipment": equipment_name,
             "quantity": quantity,
         }
@@ -957,7 +952,7 @@ def _command_worker(app, equipment_name):
                 application = _create_application(
                     user.id,
                     [(equipment_name[:200], "1")],
-                    f"[ESP32 自动申请] 人脸匹配分数: {score:.1f}",
+                    f"[ESP32 借用登记] 人脸匹配分数: {score:.1f}",
                 )
                 db.session.commit()
                 _point_after_application(application)
@@ -967,6 +962,8 @@ def _command_worker(app, equipment_name):
 
 
 def command_api():
+    if not _device_authorized():
+        return jsonify({"success": False, "message": "设备认证失败"}), 401
     equipment_name = request.args.get("cmd", "").strip()
     if not equipment_name:
         return "ERROR: Empty command", 400

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}公告管理 - 社区{% endblock %}
+{% block title %}公告管理 - 小智零件社区{% endblock %}
 {% block head %}{% include "community/_styles.html" %}{% endblock %}
 {% block content %}
 {% include "community/_nav.html" %}
@@ -9,6 +9,7 @@
     <section class="community-card">
         <h2>发布公告</h2>
         <form class="compact-form" action="{{ url_for('community.create_announcement') }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <label>标题<input name="title" maxlength="200" required></label>
             <label>内容<textarea name="content" maxlength="5000" required></textarea></label>
             <button class="button primary" type="submit">发布</button>
@@ -21,8 +22,10 @@
             <li><strong>{{ item.title }}</strong> <span class="badge">{{ '显示中' if item.is_active else '已隐藏' }}</span>
                 <p class="post-body">{{ item.content }}</p>
                 <div class="row-actions">
-                    <form action="{{ url_for('community.toggle_announcement', announcement_id=item.id) }}" method="post"><button class="button small" type="submit">{{ '隐藏' if item.is_active else '显示' }}</button></form>
-                    <form action="{{ url_for('community.delete_announcement', announcement_id=item.id) }}" method="post"><button class="button danger small" type="submit">删除</button></form>
+                    <form action="{{ url_for('community.toggle_announcement', announcement_id=item.id) }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button small" type="submit">{{ '隐藏' if item.is_active else '显示' }}</button></form>
+                    <form action="{{ url_for('community.delete_announcement', announcement_id=item.id) }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button danger small" type="submit">删除</button></form>
                 </div>
             </li>
         {% else %}<li class="muted">暂无公告</li>{% endfor %}

@@ -1,7 +1,15 @@
 (() => {
     "use strict";
 
-    const socket = typeof window.io === "function" ? window.io() : null;
+    const REQUEST_TIMEOUT = 12000;
+    const POLL_INTERVAL = 5000;
+    const UNCERTAIN_SEND = "发送结果不确定，消息可能已送达。请先核对聊天记录，勿直接重复发送；系统不会自动重发。";
+    let socket = null;
+    try {
+        socket = typeof window.io === "function" ? window.io() : null;
+    } catch (error) {
+        console.error(error);
+    }
 
     function formatTime(value) {
         const raw = String(value || "");
@@ -42,27 +50,53 @@
 
     function appendOnce(list, message, currentUserId) {
         if (!list || !message?.id) return;
-        const exists = Array.from(list.querySelectorAll(".message[data-message-id]"))
-            .some((item) => item.dataset.messageId === String(message.id));
-        if (exists) return;
-        list.appendChild(buildMessage(message, currentUserId));
+        const items = Array.from(list.querySelectorAll(".message[data-message-id]"));
+        const exists = items.find((item) => item.dataset.messageId === String(message.id));
+        if (exists) {
+            // A stale initial response must not undo a later read receipt.
+            if (Number(message.sender_id) === currentUserId && message.is_read) {
+                exists.querySelector(".meta").textContent = `${formatTime(message.timestamp)} · 已读`;
+            }
+            return;
+        }
+        const followBottom = list.scrollHeight - list.scrollTop - list.clientHeight <= 48;
+        const listTop = list.getBoundingClientRect().top;
+        const anchor = followBottom ? null : items.find((item) => item.getBoundingClientRect().bottom > listTop);
+        const anchorTop = anchor?.getBoundingClientRect().top;
+        const previousTop = list.scrollTop;
+        // Merge snapshots with live messages instead of clearing newer arrivals.
+        const next = items.find((item) => Number(item.dataset.messageId) > Number(message.id));
+        list.insertBefore(buildMessage(message, currentUserId), next || null);
         updateEmptyState(list);
-        list.scrollTop = list.scrollHeight;
+        list.scrollTop = followBottom ? list.scrollHeight
+            : previousTop + (anchor ? anchor.getBoundingClientRect().top - anchorTop : 0);
     }
 
     async function jsonRequest(url, options = {}) {
         const headers = { Accept: "application/json", ...(options.headers || {}) };
+        headers["X-CSRF-Token"] = document.querySelector('meta[name="csrf-token"]')?.content || "";
         if (options.body) headers["Content-Type"] = "application/json";
-        const response = await fetch(url, { ...options, headers });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(data.error || "请求失败");
-        return data;
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+        try {
+            const response = await fetch(url, { ...options, headers, signal: controller.signal });
+            const data = await response.json().catch(() => null);
+            if (!response.ok) {
+                const error = new Error(data?.message || data?.error || "请求失败");
+                error.definiteFailure = response.status >= 400 && response.status < 500;
+                throw error;
+            }
+            if (data === null) throw new Error("服务器返回无效响应");
+            return data;
+        } finally {
+            window.clearTimeout(timer);
+        }
     }
 
     function bindComposer(form, input) {
         if (!form || !input) return;
         input.addEventListener("keydown", (event) => {
-            if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+            if (event.key === "Enter" && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
                 event.preventDefault();
                 if (input.value.trim()) form.requestSubmit();
             }
@@ -89,10 +123,16 @@
         const list = document.getElementById("private-messages");
         const form = document.getElementById("private-message-form");
         const input = document.getElementById("private-message-input");
+        const sendButton = form?.querySelector('button[type="submit"]');
+        const sendLabel = sendButton?.querySelector("span") || sendButton;
+        const idleLabel = sendLabel?.textContent;
+        let sending = false;
+        let refreshInFlight = null;
+        let pollTimer = null;
         // Also handles the read endpoint: /api/messages/0/read.
         const endpoint = (template, userId) => template.replace(/\/0(?=\/|$)/, `/${userId}`);
 
-        setConnectionState(privateRoot, Boolean(socket?.connected), socket ? "连接中" : "离线发送");
+        setConnectionState(privateRoot, Boolean(socket?.connected), socket?.connected ? "实时连接" : "HTTP 同步");
         bindComposer(form, input);
 
         const refreshContactBadges = () => jsonRequest(privateRoot.dataset.unreadUrl)
@@ -120,56 +160,132 @@
                 });
         };
 
-        if (selectedUserId) {
-            jsonRequest(endpoint(privateRoot.dataset.messagesUrl, selectedUserId))
+        const refreshMessages = () => {
+            if (!selectedUserId || document.hidden) return Promise.resolve();
+            if (refreshInFlight) return refreshInFlight;
+            refreshInFlight = jsonRequest(endpoint(privateRoot.dataset.messagesUrl, selectedUserId))
                 .then((messages) => {
-                    list.querySelectorAll(".message[data-message-id]").forEach((item) => item.remove());
+                    if (!Array.isArray(messages)) throw new Error("消息列表格式无效");
                     messages.forEach((message) => appendOnce(list, message, currentUserId));
                     updateEmptyState(list);
-                    list.scrollTop = list.scrollHeight;
-                    return markRead();
+                    // The GET endpoint already marks this conversation as read.
+                    window.dispatchEvent(new Event("unread-change"));
+                    return refreshContactBadges();
                 })
-                .catch(console.error);
-        } else {
-            updateEmptyState(list);
+                .finally(() => { refreshInFlight = null; });
+            return refreshInFlight;
+        };
+
+        const schedulePoll = () => {
+            window.clearTimeout(pollTimer);
+            pollTimer = null;
+            if (!selectedUserId || document.hidden || socket?.connected) return;
+            pollTimer = window.setTimeout(syncMessages, POLL_INTERVAL);
+        };
+
+        async function syncMessages() {
+            window.clearTimeout(pollTimer);
+            pollTimer = null;
+            try {
+                await refreshMessages();
+                if (!socket?.connected) setConnectionState(privateRoot, false, "HTTP 同步");
+            } catch (error) {
+                console.error(error);
+                if (!socket?.connected) setConnectionState(privateRoot, false, "网络异常，等待同步");
+            } finally {
+                schedulePoll();
+            }
         }
 
-        refreshContactBadges().catch(console.error);
+        updateEmptyState(list);
+        if (selectedUserId) syncMessages();
+        else refreshContactBadges().catch(console.error);
 
-        form.addEventListener("submit", async (event) => {
+        document.addEventListener("visibilitychange", () => {
+            if (document.hidden) {
+                window.clearTimeout(pollTimer);
+                pollTimer = null;
+            } else {
+                syncMessages();
+            }
+        });
+
+        form?.addEventListener("submit", async (event) => {
             event.preventDefault();
+            if (sending) return;
             const content = input.value.trim();
             if (!selectedUserId || !content) return;
+            sending = true;
             input.disabled = true;
+            form.setAttribute("aria-busy", "true");
+            if (sendButton) {
+                sendButton.disabled = true;
+                sendButton.setAttribute("aria-busy", "true");
+            }
+            if (sendLabel) sendLabel.textContent = "发送中…";
             try {
                 if (socket?.connected) {
                     await new Promise((resolve, reject) => {
-                        socket.emit("send_private_message", { receiver_id: selectedUserId, content }, (result) => {
-                            if (result?.ok) {
-                                if (result.message) appendOnce(list, result.message, currentUserId);
-                                resolve();
-                            } else reject(new Error(result?.error || "发送失败"));
-                        });
+                        let settled = false;
+                        const timer = window.setTimeout(() => {
+                            settled = true;
+                            reject(new Error(UNCERTAIN_SEND));
+                        }, REQUEST_TIMEOUT);
+                        try {
+                            socket.emit("send_private_message", { receiver_id: selectedUserId, content }, (result) => {
+                                // Late ACKs may fill in history, but must not clear a new draft.
+                                if (result?.ok && result.message) appendOnce(list, result.message, currentUserId);
+                                if (settled) return;
+                                settled = true;
+                                window.clearTimeout(timer);
+                                if (result?.ok) resolve();
+                                else {
+                                    const error = new Error(result?.error || UNCERTAIN_SEND);
+                                    error.definiteFailure = result?.ok === false;
+                                    reject(error);
+                                }
+                            });
+                        } catch (error) {
+                            settled = true;
+                            window.clearTimeout(timer);
+                            reject(error);
+                        }
                     });
                 } else {
                     const message = await jsonRequest(endpoint(privateRoot.dataset.sendUrl, selectedUserId), {
                         method: "POST", body: JSON.stringify({ content }),
                     });
+                    if (!message?.id) throw new Error(UNCERTAIN_SEND);
                     appendOnce(list, message, currentUserId);
                 }
                 input.value = "";
                 input.style.height = "auto";
             } catch (error) {
-                window.alert(error.message);
+                syncMessages();
+                window.alert(error.definiteFailure ? error.message : UNCERTAIN_SEND);
             } finally {
+                sending = false;
                 input.disabled = false;
+                form.removeAttribute("aria-busy");
+                if (sendButton) {
+                    sendButton.disabled = false;
+                    sendButton.removeAttribute("aria-busy");
+                }
+                if (sendLabel) sendLabel.textContent = idleLabel;
                 input.focus();
             }
         });
 
-        socket?.on("connect", () => setConnectionState(privateRoot, true, "实时连接"));
-        socket?.on("disconnect", () => setConnectionState(privateRoot, false, "离线发送"));
-        socket?.on("connect_error", () => setConnectionState(privateRoot, false, "离线发送"));
+        socket?.on("connect", () => {
+            setConnectionState(privateRoot, true, "实时连接");
+            syncMessages();
+        });
+        const useHttp = () => {
+            setConnectionState(privateRoot, false, "HTTP 同步");
+            syncMessages();
+        };
+        socket?.on("disconnect", useHttp);
+        socket?.on("connect_error", useHttp);
         socket?.on("new_message", (message) => {
             const belongsHere = selectedUserId && (
                 (Number(message.sender_id) === currentUserId && Number(message.receiver_id) === selectedUserId) ||
@@ -177,7 +293,7 @@
             );
             if (belongsHere) {
                 appendOnce(list, message, currentUserId);
-                if (Number(message.sender_id) === selectedUserId) markRead().catch(console.error);
+                if (!document.hidden && Number(message.sender_id) === selectedUserId) markRead().catch(console.error);
             }
             refreshContactBadges().catch(console.error);
             window.dispatchEvent(new Event("unread-change"));

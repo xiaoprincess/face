@@ -17,7 +17,18 @@ from flask import (
 from flask_login import current_user, login_required
 from flask_socketio import join_room, leave_room
 from sqlalchemy import and_, func, or_
-from werkzeug.utils import secure_filename
+from sqlalchemy.exc import SQLAlchemyError
+from werkzeug.exceptions import RequestEntityTooLarge
+
+from cloud_policy import (
+    ALLOWED_EXTENSIONS,
+    UPLOAD_LOCK,
+    CloudUploadError,
+    check_capacity,
+    display_filename,
+    limits,
+    readable_size,
+)
 
 from community_models import (
     Announcement,
@@ -305,7 +316,33 @@ def cloud():
     if not current_user.is_admin:
         query = query.filter_by(user_id=current_user.id)
     files = query.order_by(FileRecord.uploaded_at.desc()).all()
-    return render_template("community/cloud.html", files=files)
+    user_used, site_used = _cloud_usage(current_user.id)
+    user_limit, site_limit, file_limit = limits(current_app.config)
+    return render_template(
+        "community/cloud.html", files=files,
+        user_used=user_used, site_used=site_used,
+        user_limit=user_limit, site_limit=site_limit, file_limit=file_limit,
+        request_limit=current_app.config.get("MAX_CONTENT_LENGTH"),
+        allowed_extensions=sorted(ALLOWED_EXTENSIONS), readable_size=readable_size,
+    )
+
+
+def _cloud_usage(user_id):
+    user_used = db.session.query(func.coalesce(func.sum(FileRecord.file_size), 0)).filter(
+        FileRecord.user_id == user_id
+    ).scalar()
+    site_used = db.session.query(func.coalesce(func.sum(FileRecord.file_size), 0)).scalar()
+    return int(user_used), int(site_used)
+
+
+@community_bp.errorhandler(RequestEntityTooLarge)
+def cloud_request_too_large(error):
+    if request.endpoint != "community.upload_file":
+        return error
+    maximum = current_app.config.get("MAX_CONTENT_LENGTH")
+    description = readable_size(maximum) if maximum is not None else "站点配置值"
+    flash(f"上传请求过大：请求上限 {description}（包含文件和表单），请选择更小的文件", "error")
+    return redirect(url_for("community.cloud"), code=303)
 
 
 @community_bp.route("/cloud/upload", methods=["POST"])
@@ -315,24 +352,63 @@ def upload_file():
     if uploaded is None or not uploaded.filename:
         flash("请选择文件", "error")
         return redirect(url_for("community.cloud"))
-    original_name = secure_filename(uploaded.filename)
-    if not original_name:
-        flash("文件名无效", "error")
+    try:
+        original_name, suffix = display_filename(uploaded.filename)
+    except CloudUploadError as error:
+        flash(str(error), "error")
         return redirect(url_for("community.cloud"))
-    suffix = Path(original_name).suffix[:20]
-    stored_name = secure_filename(f"{uuid.uuid4().hex}{suffix}")
-    upload_dir = Path(current_app.config["UPLOAD_FOLDER"])
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    destination = upload_dir / stored_name
-    uploaded.save(destination)
-    record = FileRecord(
-        filename=stored_name,
-        original_name=original_name,
-        file_size=destination.stat().st_size,
-        user_id=current_user.id,
-    )
-    db.session.add(record)
-    db.session.commit()
+    user_id = current_user.id
+    # Start quota reads only after acquiring the lock, including a fresh DB
+    # transaction (authentication may already have opened a read transaction).
+    with UPLOAD_LOCK:
+        destination = None
+        created = False
+        try:
+            db.session.rollback()
+            quota = limits(current_app.config)
+            user_used, site_used = _cloud_usage(user_id)
+            # Werkzeug's multipart upload streams are seekable temporary files.
+            # Check actual length, never the client-supplied Content-Length.
+            uploaded.stream.seek(0, 2)
+            size = uploaded.stream.tell()
+            uploaded.stream.seek(0)
+            check_capacity(size, user_used, site_used, quota)
+            stored_name = f"{uuid.uuid4().hex}.{suffix}"
+            upload_dir = Path(current_app.config["UPLOAD_FOLDER"])
+            upload_dir.mkdir(parents=True, exist_ok=True)
+            destination = upload_dir / stored_name
+            with destination.open("xb") as output:
+                created = True
+                written = 0
+                budget = min(quota[2], quota[0] - user_used, quota[1] - site_used)
+                while True:
+                    chunk = uploaded.stream.read(min(64 * 1024, budget - written + 1))
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    check_capacity(written, user_used, site_used, quota)
+                    output.write(chunk)
+            # Recheck persisted size and database totals before committing.
+            size = destination.stat().st_size
+            check_capacity(size, *_cloud_usage(user_id), quota)
+            db.session.add(FileRecord(
+                filename=stored_name, original_name=original_name,
+                file_size=size, user_id=user_id,
+            ))
+            db.session.commit()
+        except (CloudUploadError, OSError, SQLAlchemyError) as error:
+            db.session.rollback()
+            if created:
+                try:
+                    destination.unlink(missing_ok=True)
+                except OSError:
+                    current_app.logger.exception("Could not remove failed cloud upload %s", destination)
+            if isinstance(error, CloudUploadError):
+                flash(str(error), "error")
+            else:
+                current_app.logger.exception("Cloud upload failed")
+                flash("上传失败，文件未保存，请稍后重试或联系管理员", "error")
+            return redirect(url_for("community.cloud"))
     flash(f"已上传 {original_name}", "success")
     return redirect(url_for("community.cloud"))
 
@@ -346,9 +422,12 @@ def download_file(file_id):
     upload_dir = Path(current_app.config["UPLOAD_FOLDER"])
     if not (upload_dir / record.filename).is_file():
         abort(404)
-    return send_from_directory(
-        upload_dir, record.filename, as_attachment=True, download_name=record.original_name
+    response = send_from_directory(
+        upload_dir, record.filename, as_attachment=True, download_name=record.original_name,
+        mimetype="application/octet-stream",
     )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 @community_bp.route("/cloud/<int:file_id>/delete", methods=["POST"])
@@ -461,6 +540,11 @@ def notifications():
         .limit(100)
         .all()
     )
+    unread = [item for item in items if not item.is_read]
+    if unread:
+        for item in unread:
+            item.is_read = True
+        db.session.commit()
     return render_template("community/notifications.html", notifications=items)
 
 

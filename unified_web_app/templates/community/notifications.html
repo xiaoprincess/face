@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}通知 - 社区{% endblock %}
+{% block title %}通知 - 小智零件社区{% endblock %}
 {% block head %}{% include "community/_styles.html" %}{% endblock %}
 {% block content %}
 {% include "community/_nav.html" %}
-<div class="toolbar notification-toolbar"><div><p class="eyebrow">INBOX</p><h1>通知</h1><p class="muted">查看与你相关的消息、回复和提醒。</p></div><form action="{{ url_for('community.read_all_notifications') }}" method="post"><button class="button small" type="submit" {% if not notifications %}disabled{% endif %}>全部标为已读</button></form></div>
+<div class="toolbar notification-toolbar"><div><p class="eyebrow">INBOX</p><h1>通知</h1><p class="muted">进入本页后，未读提醒会自动标记为已读。</p></div><span class="notification-read-state">已同步未读状态</span></div>
 <section class="community-card notification-card">
     <ul class="plain-list">
     {% for item in notifications %}

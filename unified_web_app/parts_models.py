@@ -86,7 +86,8 @@ class PartApplication(db.Model):
     photos = db.Column(db.Text, nullable=False, default="[]")
     purpose = db.Column(db.Text, nullable=False)
     expected_date = db.Column(db.Date)
-    status = db.Column(db.String(20), nullable=False, default="pending", index=True)
+    # Keep the legacy storage value/check constraint; expose it as a recorded loan.
+    status = db.Column(db.String(20), nullable=False, default="approved", index=True)
     reject_reason = db.Column(db.Text)
     cabinet_id = db.Column(
         db.Integer, db.ForeignKey("cabinets.id", ondelete="SET NULL"), index=True
@@ -118,6 +119,24 @@ class PartApplication(db.Model):
         """Readable alias used by the parts UI while retaining a conventional user relation."""
 
         return self.user
+
+    @property
+    def record_status(self):
+        return {
+            "approved": "recorded",
+            "pending": "historical_pending",
+            "rejected": "historical_rejected",
+            "cancelled": "historical_cancelled",
+        }.get(self.status, "historical_unknown")
+
+    @property
+    def record_status_label(self):
+        return {
+            "recorded": "已登记",
+            "historical_pending": "历史未完成",
+            "historical_rejected": "历史未通过",
+            "historical_cancelled": "历史已取消",
+        }.get(self.record_status, "历史记录")
 
     @property
     def equipment_items(self):
@@ -165,7 +184,7 @@ class PartApplication(db.Model):
             "photos": self.photo_list,
             "purpose": self.purpose,
             "expected_date": self.expected_date.isoformat() if self.expected_date else None,
-            "status": self.status,
+            "status": self.record_status,
             "reject_reason": self.reject_reason,
             "cabinet_id": self.cabinet_id,
             "cabinet_number": self.cabinet.cabinet_number if self.cabinet else None,

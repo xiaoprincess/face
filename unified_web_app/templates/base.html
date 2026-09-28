@@ -1,17 +1,16 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="bento">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{% block title %}小智零件社区{% endblock %}</title>
     <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     {% block head %}{% endblock %}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/studio.css', v='20260914-2') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/atelier.css', v='20260920-1') }}">
     {% block page_styles %}{% endblock %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/themes.css', v='20260920-1') }}">
-    <script src="{{ url_for('static', filename='js/appearance.js', v='20260920-1') }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/bento.css', v='20260928-4') }}">
 </head>
 <body class="{% if current_user.is_authenticated %}workspace{% else %}public-page{% endif %}">
     {% from '_icons.html' import icon %}
@@ -22,12 +21,13 @@
             {% if current_user.is_authenticated %}
                 <a class="{% if request.endpoint == 'dashboard' %}active{% endif %}" href="{{ url_for('dashboard') }}">{{ icon('home') }}工作台</a>
                 <a class="{% if request.path.startswith('/parts') %}active{% endif %}" href="{{ url_for('parts.index') }}">{{ icon('box') }}零件管家</a>
-                <a class="{% if request.path.startswith('/community') and not request.path.startswith('/community/chat') and not request.path.startswith('/community/cloud') and not request.path.startswith('/community/notifications') %}active{% endif %}" href="{{ url_for('community.index') }}">{{ icon('grid') }}社区</a>
+                <a class="{% if request.path.startswith('/community') and not request.path.startswith('/community/chat') and not request.path.startswith('/community/cloud') and not request.path.startswith('/community/notifications') and not request.path.startswith('/community/announcements') %}active{% endif %}" href="{{ url_for('community.index') }}">{{ icon('grid') }}社区</a>
                 <a class="{% if request.path.startswith('/community/chat') %}active{% endif %}" href="{{ url_for('community.chat') }}">{{ icon('chat') }}私聊<span class="nav-unread-badge" data-unread-badge="messages" hidden>0</span></a>
                 <a class="{% if request.path.startswith('/community/notifications') %}active{% endif %}" href="{{ url_for('community.notifications') }}">{{ icon('bell') }}通知<span class="nav-unread-badge" data-unread-badge="notifications" hidden>0</span></a>
                 <a class="{% if request.path.startswith('/community/cloud') %}active{% endif %}" href="{{ url_for('community.cloud') }}">{{ icon('folder') }}云盘</a>
                 <span class="nav-user"><span class="nav-avatar">{{ current_user.username[0]|upper }}</span>{{ current_user.username }}</span>
                 <form class="inline-form" action="{{ url_for('auth.logout') }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button class="link-button" type="submit">退出</button>
                 </form>
             {% else %}
@@ -36,14 +36,6 @@
             {% endif %}
         </nav>
     </header>
-    <div class="appearance-switch">
-        <label for="appearance">外观</label>
-        <select id="appearance" aria-label="选择网站外观">
-            <option value="blue">晴空 · 蓝白</option>
-            <option value="cream">奶油 · 浅色</option>
-            <option value="night">星夜 · 深蓝</option>
-        </select>
-    </div>
     {% if current_user.is_authenticated %}
     <div class="workspace-top"><span>我的空间 <span class="breadcrumb-separator">/</span> {{ self.title()|striptags }}</span><span class="workspace-label">PARTS & IDEAS</span></div>
     {% endif %}

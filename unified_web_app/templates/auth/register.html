@@ -1,15 +1,41 @@
 {% extends "base.html" %}
 {% block title %}注册 - 小智零件社区{% endblock %}
 {% block content %}
+<div class="auth-layout">
+<aside class="auth-story"><p class="eyebrow">HELLO, MAKER.</p><h2>好想法，<br>从这里开始<span>。</span></h2><p>给零件一个位置，<br>给下一个项目一个起点。</p><div class="bento-login-art">{% include '_bento_art.html' %}<span class="bento-sticker" aria-hidden="true">LET'S<br>MAKE IT!</span></div><div class="auth-story-bottom">一个账号，连接整个创作空间</div></aside>
 <section class="auth-card">
     <p class="eyebrow">开始新的创造</p><h1>加入小智社区</h1><p class="auth-intro">一个账号，连接你的器材、伙伴和资料。</p>
-    <form method="post">
-        <label>用户名<input name="username" required maxlength="80" autocomplete="username"></label>
-        <label>邮箱<input type="email" name="email" required maxlength="120" autocomplete="email"></label>
+    <form method="post" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label>用户名<input name="username" value="{{ username|default('') }}" required maxlength="80" autocomplete="username"></label>
+        <label>邮箱<input type="email" name="email" value="{{ email|default('') }}" required maxlength="120" autocomplete="email"></label>
         <label>密码<input type="password" name="password" required minlength="8" autocomplete="new-password"></label>
         <label>确认密码<input type="password" name="confirm_password" required minlength="8" autocomplete="new-password"></label>
-        <button class="button primary" type="submit">创建账号</button>
+        <label class="registration-face-option">
+            <input type="checkbox" name="register_face" {% if register_face is not defined or register_face %}checked{% endif %}>
+            <span><strong>注册时同步登记人脸</strong><small>使用当前电脑的摄像头拍照，不会调用树莓派摄像头或云台。照片仅用于百度人脸特征登记。</small></span>
+        </label>
+        <div class="registration-face-capture" data-face-capture>
+            <div class="registration-face-preview">
+                <video data-face-video playsinline muted hidden></video>
+                <img data-face-photo alt="已拍摄的人脸照片" hidden>
+                <div class="registration-face-placeholder" data-face-placeholder>电脑摄像头画面将在这里显示</div>
+            </div>
+            <div class="registration-face-actions">
+                <button class="button small" type="button" data-face-open>打开电脑摄像头</button>
+                <button class="button small" type="button" data-face-snapshot disabled>拍摄照片</button>
+                <button class="button small ghost" type="button" data-face-retake hidden>重新拍摄</button>
+            </div>
+            <canvas data-face-canvas hidden></canvas>
+            <input type="file" name="face_image" accept="image/jpeg" capture="user" data-face-image hidden>
+        </div>
+        <p class="registration-face-status" data-registration-face-status>请先允许浏览器访问当前电脑的摄像头，然后拍摄一张正脸照片。</p>
+        <button class="button primary" type="submit" data-register-submit>创建账号并采集人脸</button>
     </form>
     <p class="muted">已有账号？<a href="{{ url_for('auth.login') }}">立即登录 →</a></p>
 </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/registration-face.js', v='20260928-2') }}"></script>
 {% endblock %}

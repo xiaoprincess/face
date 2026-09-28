@@ -131,19 +131,37 @@ class HardwareService:
             image=image_base64,
             image_type="BASE64",
             group_id_list=group_id,
+            options={
+                "quality_control": "NORMAL",
+                "liveness_control": "NORMAL",
+            },
         )
 
-    def register_face(self, user_id, image_base64, config=None, group_id="equipment_users"):
+    def register_face(
+        self,
+        user_id,
+        image_base64,
+        config=None,
+        group_id="equipment_users",
+        replace=False,
+    ):
         if not image_base64:
             raise ValueError("缺少人脸图片")
         if "base64," in image_base64:
             image_base64 = image_base64.split("base64,", 1)[1]
         client = self._get_face_client(config)
-        return client.addUser(
+        method = client.updateUser if replace else client.addUser
+        options = {
+            "quality_control": "NORMAL",
+            "liveness_control": "NORMAL",
+            "action_type": "REPLACE",
+        }
+        return method(
             image=image_base64,
             image_type="BASE64",
             group_id=group_id,
             user_id=str(user_id),
+            options=options,
         )
 
     def capture_face(self):

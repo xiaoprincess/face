@@ -1,13 +1,49 @@
+import base64
 from urllib.parse import urlsplit
 
-from flask import Blueprint, flash, redirect, render_template, request, url_for
+from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_user, logout_user
 
 from core_models import User
 from extensions import db, utc_now
+from hardware import HardwareUnavailable, hardware
+from parts_models import SystemSetting
 
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/auth")
+
+
+def _registration_face_group():
+    return str(
+        current_app.config.get("BAIDU_GROUP_ID")
+        or SystemSetting.get_value("face_group_id", "equipment_users")
+    ).strip() or "equipment_users"
+
+
+def _validated_browser_face_image(upload):
+    if upload is None or not upload.filename:
+        raise ValueError("请先使用当前电脑的摄像头拍摄人脸照片")
+    image_bytes = upload.stream.read(5 * 1024 * 1024 + 1)
+    if len(image_bytes) < 1024:
+        raise ValueError("摄像头照片内容不完整，请重新拍摄")
+    if len(image_bytes) > 5 * 1024 * 1024:
+        raise ValueError("摄像头照片不能超过 5 MB")
+    if not image_bytes.startswith(b"\xff\xd8\xff"):
+        raise ValueError("摄像头照片不是有效的 JPEG 图片，请重新拍摄")
+    return base64.b64encode(image_bytes).decode("ascii")
+
+
+def _register_face_during_signup(user, image):
+    result = hardware.register_face(
+        user.id,
+        image,
+        current_app.config,
+        _registration_face_group(),
+        replace=False,
+    )
+    if result.get("error_code") != 0:
+        raise ValueError(result.get("error_msg") or "百度人脸注册失败")
+    user.face_registered = True
 
 
 def _safe_next_url():
@@ -34,6 +70,8 @@ def register():
         email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
         confirm = request.form.get("confirm_password", "")
+        register_face = request.form.get("register_face") == "on"
+        face_image = request.files.get("face_image")
 
         if not username or not email or not password:
             flash("请完整填写注册信息", "error")
@@ -46,18 +84,54 @@ def register():
         ).first():
             flash("用户名或邮箱已存在", "error")
         else:
+            if register_face:
+                try:
+                    face_image = _validated_browser_face_image(face_image)
+                except ValueError as exc:
+                    flash(f"人脸登记失败，账号尚未创建：{exc}", "error")
+                    return render_template(
+                        "auth/register.html",
+                        username=username,
+                        email=email,
+                        register_face=True,
+                    ), 400
             is_first_user = User.query.count() == 0
             role = "admin" if is_first_user else "user"
             user = User(username=username, email=email, role=role)
             user.set_password(password)
-            db.session.add(user)
-            db.session.commit()
+            try:
+                db.session.add(user)
+                db.session.flush()
+                if register_face:
+                    _register_face_during_signup(user, face_image)
+                db.session.commit()
+            except (HardwareUnavailable, ValueError) as exc:
+                db.session.rollback()
+                flash(f"人脸登记失败，账号尚未创建：{exc}", "error")
+                return render_template(
+                    "auth/register.html",
+                    username=username,
+                    email=email,
+                    register_face=True,
+                ), 503
+            except Exception:
+                db.session.rollback()
+                current_app.logger.exception("注册账号或登记人脸失败")
+                flash("注册失败，账号尚未创建，请稍后重试", "error")
+                return render_template(
+                    "auth/register.html",
+                    username=username,
+                    email=email,
+                    register_face=register_face,
+                ), 500
             login_user(user)
             message = "注册成功。你是首个账号，已成为管理员。" if is_first_user else "注册成功"
+            if register_face:
+                message += " 人脸信息已同步登记。"
             flash(message, "success")
             return redirect(url_for("dashboard"))
 
-    return render_template("auth/register.html")
+    return render_template("auth/register.html", register_face=True)
 
 
 @auth_bp.route("/login", methods=["GET", "POST"])
