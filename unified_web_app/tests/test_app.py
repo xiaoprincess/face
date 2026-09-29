@@ -11,7 +11,7 @@ from app import create_app
 from community_models import BlogPost, Notification
 from core_models import User
 from extensions import db, socketio
-from parts_models import Cabinet, PartApplication
+from parts_models import Cabinet, CabinetComponent, PartApplication
 
 
 class IsolatedAppTestCase(unittest.TestCase):
@@ -144,6 +144,47 @@ class UnifiedAppTestCase(IsolatedAppTestCase):
         )
         self.assertEqual(response.headers["Location"], "/dashboard")
 
+    def test_device_borrow_request_id_treats_underscore_as_literal(self):
+        self.register_admin()
+        self.app.config["PARTS_SKIP_FACE_VERIFICATION"] = True
+        with self.app.app_context():
+            cabinet = Cabinet(cabinet_number="14", equipment_name="电源")
+            cabinet.components.append(
+                CabinetComponent(component_name="锂电池", quantity=20, unit="件")
+            )
+            db.session.add(cabinet)
+            db.session.commit()
+            component_id = cabinet.components[0].id
+            user = User.query.one()
+            user.email = "xiaozhi-bot@local.test"
+            db.session.commit()
+
+        first = self.client.post(
+            "/parts/api/device/borrow",
+            json={"component_id": component_id, "quantity": 1, "request_id": "testX123"},
+            headers={"X-Device-Token": "device-test-token"},
+        )
+        second = self.client.post(
+            "/parts/api/device/borrow",
+            json={"component_id": component_id, "quantity": 2, "request_id": "test_123"},
+            headers={"X-Device-Token": "device-test-token"},
+        )
+        repeated = self.client.post(
+            "/parts/api/device/borrow",
+            json={"component_id": component_id, "quantity": 3, "request_id": "test_123"},
+            headers={"X-Device-Token": "device-test-token"},
+        )
+
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 201)
+        self.assertFalse(second.get_json()["duplicate"])
+        self.assertEqual(second.get_json()["items"][0]["quantity"], "2")
+        self.assertEqual(repeated.status_code, 200)
+        self.assertTrue(repeated.get_json()["duplicate"])
+        self.assertEqual(repeated.get_json()["record_id"], second.get_json()["record_id"])
+        with self.app.app_context():
+            self.assertEqual(PartApplication.query.count(), 2)
+
     def test_realtime_connection_and_private_upload_storage(self):
         self.register_admin()
         realtime_client = socketio.test_client(
@@ -171,28 +212,73 @@ class UnifiedAppTestCase(IsolatedAppTestCase):
         self.assertEqual(self.client.get(f"/static/uploads/{filename}").status_code, 404)
         self.assertEqual(self.client.get(f"/parts/uploads/{filename}").status_code, 302)
 
-    def test_opening_notifications_marks_them_read_and_clears_badge_count(self):
+    def test_logout_disconnects_existing_socket(self):
+        self.register_admin()
+        realtime_client = socketio.test_client(
+            self.app, flask_test_client=self.client
+        )
+        self.assertTrue(realtime_client.is_connected())
+
+        response = self.csrf_post("/auth/logout")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(realtime_client.is_connected())
+
+    def test_private_message_payload_uses_each_viewers_perspective(self):
         self.register_admin()
         with self.app.app_context():
-            db.session.add(
+            receiver = User(
+                username="receiver",
+                email="receiver@example.test",
+                role="user",
+            )
+            receiver.set_password("password123")
+            db.session.add(receiver)
+            db.session.commit()
+            receiver_id = receiver.id
+
+        with patch("community.socketio.emit") as emit:
+            response = self.csrf_post(
+                f"/community/api/messages/{receiver_id}",
+                json={"content": "实时消息"},
+            )
+        self.assertEqual(response.status_code, 201)
+
+        messages_by_room = {
+            call.kwargs["room"]: call.args[1]
+            for call in emit.call_args_list
+            if call.args[0] == "new_message"
+        }
+        sender_message = messages_by_room["user_1"]
+        receiver_message = messages_by_room[f"user_{receiver_id}"]
+        self.assertTrue(sender_message["is_mine"])
+        self.assertFalse(receiver_message["is_mine"])
+        self.assertEqual(receiver_message["sender_id"], 1)
+        self.assertEqual(receiver_message["receiver_id"], receiver_id)
+
+    def test_opening_notifications_marks_more_than_100_read(self):
+        self.register_admin()
+        with self.app.app_context():
+            db.session.add_all([
                 Notification(
                     user_id=1,
                     sender_id=None,
                     type="mention",
-                    content="测试通知",
+                    content=f"测试通知 {index}",
                     link="/community/",
                 )
-            )
+                for index in range(101)
+            ])
             db.session.commit()
 
         before = self.client.get("/community/api/notifications/unread-count")
-        self.assertEqual(before.get_json(), {"count": 1})
+        self.assertEqual(before.get_json(), {"count": 101})
         response = self.client.get("/community/notifications")
         self.assertEqual(response.status_code, 200)
         after = self.client.get("/community/api/notifications/unread-count")
         self.assertEqual(after.get_json(), {"count": 0})
         with self.app.app_context():
-            self.assertTrue(Notification.query.one().is_read)
+            self.assertEqual(Notification.query.filter_by(is_read=False).count(), 0)
 
     def test_signup_can_capture_and_register_face(self):
         self.hardware.register_face.side_effect = None

@@ -33,7 +33,7 @@
     }
 
     function buildMessage(message, currentUserId) {
-        const mine = message.is_mine ?? Number(message.sender_id) === currentUserId;
+        const mine = Number(message.sender_id) === currentUserId;
         const item = document.createElement("div");
         item.className = `message${mine ? " mine" : ""}`;
         item.dataset.messageId = String(message.id);

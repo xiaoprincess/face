@@ -56,6 +56,7 @@ python simulate_xiaozhi_borrow.py --remote --execute
 ```
 
 远程模式不会启动电脑上的 MCP 子进程，而是在树莓派上运行 `parts_mcp_server/.venv/bin/python`。SSH 密码由 Plink 在终端中询问，不写入脚本或环境变量。
+默认等待上限为 300 秒；需要调整时可使用 `--remote-timeout 秒数`。如果树莓派虚拟环境不在默认位置，可通过 `PARTS_REMOTE_PYTHON` 指定绝对路径。
 
 脚本会要求库存中“锂电池”匹配到唯一零件；如果有多个型号，会停止并列出候选项，不会自行猜测。实际执行前请确认树莓派网站、MCP 配置、`PARTS_DEVICE_TOKEN`、摄像头和百度人脸服务均正常。
 

@@ -50,14 +50,17 @@ def _run_on_raspberry_pi(args: argparse.Namespace) -> int:
     if not Path(plink).is_file():
         raise RuntimeError(f"找不到 Plink：{plink}")
 
-    # remote_path 是树莓派上的 Linux 路径，不能用 Windows pathlib 处理，
-    # 否则会被转换成 \home\xiao\face。
-    remote_root = posixpath.dirname(posixpath.dirname(remote_path))
+    # remote_path 是树莓派上的 Linux 路径，不能用 Windows pathlib 处理。
+    remote_root = posixpath.dirname(remote_path)
+    remote_python = os.environ.get(
+        "PARTS_REMOTE_PYTHON",
+        posixpath.join(remote_root, ".venv/bin/python"),
+    ).strip()
     remote_command = [
         "cd",
         remote_root,
         "&&",
-        ".venv/bin/python",
+        remote_python,
         remote_path,
         "--keyword",
         args.keyword,
@@ -78,7 +81,17 @@ def _run_on_raspberry_pi(args: argparse.Namespace) -> int:
     command.append(f"{user}@{host}")
     command.append(command_text)
     print(f"通过 SSH 请求树莓派执行 MCP 模拟：{user}@{host}")
-    completed = subprocess.run(command, cwd=BASE_DIR.parent, check=False)
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=BASE_DIR.parent,
+            check=False,
+            timeout=args.remote_timeout,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            f"远程模拟超过 {args.remote_timeout} 秒，已停止等待；请检查 SSH、摄像头和网站日志。"
+        ) from error
     return completed.returncode
 
 
@@ -174,10 +187,18 @@ def main() -> int:
     parser.add_argument("--remote-user", help="树莓派 SSH 用户名，默认读取 PARTS_REMOTE_USER 或 xiao")
     parser.add_argument("--remote-path", help="树莓派上的脚本路径")
     parser.add_argument("--remote-hostkey", help="Plink 主机指纹；也可设置 PARTS_REMOTE_HOSTKEY")
+    parser.add_argument(
+        "--remote-timeout",
+        type=int,
+        default=300,
+        help="远程模拟最长等待秒数，默认：300",
+    )
     args = parser.parse_args()
 
     if args.quantity <= 0:
         parser.error("--quantity 必须大于 0")
+    if args.remote_timeout < 30:
+        parser.error("--remote-timeout 不能小于 30 秒")
 
     if args.remote or args.remote_host or os.environ.get("PARTS_REMOTE_HOST"):
         return _run_on_raspberry_pi(args)

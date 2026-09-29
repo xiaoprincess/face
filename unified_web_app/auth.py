@@ -5,12 +5,20 @@ from flask import Blueprint, current_app, flash, redirect, render_template, requ
 from flask_login import current_user, login_user, logout_user
 
 from core_models import User
-from extensions import db, utc_now
+from extensions import db, socketio, utc_now
 from hardware import HardwareUnavailable, hardware
 from parts_models import SystemSetting
 
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/auth")
+
+
+def _disconnect_user_sockets(user_id):
+    room = f"user_{user_id}"
+    participants = list(socketio.server.manager.get_participants("/", room))
+    for participant in participants:
+        sid = participant[0] if isinstance(participant, tuple) else participant
+        socketio.server.disconnect(sid, namespace="/")
 
 
 def _registration_face_group():
@@ -160,5 +168,6 @@ def login():
 @auth_bp.route("/logout", methods=["POST"])
 def logout():
     if current_user.is_authenticated:
+        _disconnect_user_sockets(current_user.id)
         logout_user()
     return redirect(url_for("index"))

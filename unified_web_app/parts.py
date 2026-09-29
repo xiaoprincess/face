@@ -685,8 +685,13 @@ def _borrow_result(application, request_id, score=None, duplicate=False):
 
 def _existing_borrow_request(request_id):
     marker = f"[MCP 借用请求:{request_id}]"
+    escaped_marker = (
+        marker.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
     return (
-        PartApplication.query.filter(PartApplication.purpose.contains(marker))
+        PartApplication.query.filter(
+            PartApplication.purpose.like(f"%{escaped_marker}%", escape="\\")
+        )
         .order_by(PartApplication.id.desc())
         .first()
     )

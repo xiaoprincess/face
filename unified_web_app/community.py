@@ -63,7 +63,9 @@ def _is_owner_or_admin(owner_id):
     )
 
 
-def _message_dict(message):
+def _message_dict(message, viewer_id=None):
+    if viewer_id is None:
+        viewer_id = current_user.id
     return {
         "id": message.id,
         "content": message.content,
@@ -72,7 +74,7 @@ def _message_dict(message):
         "sender": message.sender.username,
         "timestamp": message.timestamp.isoformat(timespec="seconds"),
         "is_read": message.is_read,
-        "is_mine": message.sender_id == current_user.id,
+        "is_mine": message.sender_id == viewer_id,
     }
 
 
@@ -120,15 +122,16 @@ def _store_private_message(receiver_id, content):
     )
     db.session.add(notification)
     db.session.commit()
-    payload = _message_dict(message)
-    socketio.emit("new_message", payload, room=f"user_{receiver.id}")
-    socketio.emit("new_message", payload, room=f"user_{current_user.id}")
+    sender_payload = _message_dict(message, current_user.id)
+    receiver_payload = _message_dict(message, receiver.id)
+    socketio.emit("new_message", receiver_payload, room=f"user_{receiver.id}")
+    socketio.emit("new_message", sender_payload, room=f"user_{current_user.id}")
     socketio.emit(
         "new_notification",
         {"type": "message", "content": notification.content, "link": notification.link},
         room=f"user_{receiver.id}",
     )
-    return payload, None
+    return sender_payload, None
 
 
 @community_bp.route("/")
@@ -534,17 +537,17 @@ def unread_notification_count():
 @community_bp.route("/notifications")
 @login_required
 def notifications():
+    unread_count = Notification.query.filter_by(
+        user_id=current_user.id, is_read=False
+    ).update({"is_read": True})
+    if unread_count:
+        db.session.commit()
     items = (
         Notification.query.filter_by(user_id=current_user.id)
         .order_by(Notification.created_at.desc())
         .limit(100)
         .all()
     )
-    unread = [item for item in items if not item.is_read]
-    if unread:
-        for item in unread:
-            item.is_read = True
-        db.session.commit()
     return render_template("community/notifications.html", notifications=items)
 
 
@@ -567,7 +570,7 @@ def socket_connect(auth=None):
 
 
 @socketio.on("disconnect")
-def socket_disconnect():
+def socket_disconnect(reason=None):
     if current_user.is_authenticated:
         leave_room(f"user_{current_user.id}")
 
