@@ -19,7 +19,7 @@
 3. 首次导入库存：
 
    ```bat
-   .venv\Scripts\python.exe sync_inventory.py "C:\Users\lenovo\Downloads\零件管家器材库存清单.xlsx"
+   .venv\Scripts\python.exe sync_inventory.py "你的库存清单.xlsx"
    ```
 
 4. 将小智 MCP WebSocket 地址保存到 `.env` 的 `XIAOZHI_MCP_ENDPOINT`。不要把 `.env` 发给别人或提交到 Git。

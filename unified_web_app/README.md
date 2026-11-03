@@ -272,7 +272,7 @@ http://127.0.0.1:5050
 | `/parts/` | 零件管家入口 |
 | `/parts/applications`（别名 `/parts/records`） | 借用登记与本人借用记录 |
 | `/parts/admin` | 管理员后台 |
-| `/parts/admin?tab=records` | 管理员借用记录（默认页签） |
+| `/parts/admin?tab=records` | 管理员借用记录 |
 | `/parts/admin?tab=inventory` | 管理员库存管理 |
 | `/parts/admin?tab=create` | 新增柜子 |
 | `/parts/api/device/borrow` | 小智 / MCP 登记借用记录接口（需要设备令牌） |
@@ -349,7 +349,7 @@ http://127.0.0.1:5050
 
 ## 16. 当前已知限制
 
-- 树莓派摄像头如果被系统识别为不可用，借用流程会使用临时免人脸验证模式（`PARTS_SKIP_FACE_VERIFICATION=true`）；这不代表人脸识别硬件已经修复。
+- 树莓派摄像头或云台不可用时默认返回错误。只有维护人员显式设置 `PARTS_SKIP_FACE_VERIFICATION=true` 才启用临时免人脸验证，跳过相机与云台并标注未核验；这不代表硬件已经修复。备用借用账号必须已存在。
 - 数据库 `status` 列仍是旧约束，历史申请与新借用记录共存在同一张表，界面上用“已登记 / 历史记录”区分。
 - 旧 ESP32 固件如果仍然写死旧 IP，需要更新地址或通过网络映射保持兼容。
 - 旧版站点 `web/` 仍保留“申请 + 审批”的老实现，仅其 `agent_yuntai` 云台模块被当前网站调用；两套站点不要混用同一份数据库。
