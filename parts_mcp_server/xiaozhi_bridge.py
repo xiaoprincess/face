@@ -86,6 +86,32 @@ def _message_key(message_id: object) -> str:
     return json.dumps(message_id, ensure_ascii=False, sort_keys=True)
 
 
+def _business_result_succeeded(message: dict) -> bool | None:
+    """Read a tool's business-level success flag from common MCP result shapes."""
+
+    result = message.get("result")
+    if not isinstance(result, dict):
+        return None
+    if result.get("isError") is True:
+        return False
+
+    candidates = [result.get("structuredContent"), result]
+    content = result.get("content")
+    if isinstance(content, list):
+        for item in content:
+            if not isinstance(item, dict) or item.get("type") != "text":
+                continue
+            try:
+                candidates.append(json.loads(str(item.get("text", ""))))
+            except (TypeError, ValueError):
+                continue
+
+    for candidate in candidates:
+        if isinstance(candidate, dict) and isinstance(candidate.get("success"), bool):
+            return candidate["success"]
+    return None
+
+
 def _observe_message(
     raw_message: str,
     source: str,
@@ -130,7 +156,8 @@ def _observe_message(
             if "id" in message and ("result" in message or "error" in message):
                 tool_name = pending_calls.pop(_message_key(message["id"]), None)
                 if tool_name:
-                    succeeded = "error" not in message
+                    business_success = _business_result_succeeded(message)
+                    succeeded = "error" not in message and business_success is not False
                     status["last_tool"] = tool_name
                     status["last_result"] = "success" if succeeded else "error"
                     if succeeded:

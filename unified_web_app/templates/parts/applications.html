@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}我的器材申请 - 零件管家{% endblock %}
+{% block title %}我的借用记录 - 零件管家{% endblock %}
 {% block head %}
 <style>
-    .parts-stats { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:20px 0; }
+    .parts-stats { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin:20px 0; }
     .parts-stat { background:white; border:1px solid var(--line); border-radius:14px; padding:18px; }
     .parts-stat strong { display:block; font-size:28px; margin-top:4px; }
     .item-row { display:grid; grid-template-columns:minmax(0,2fr) minmax(100px,1fr) auto; gap:10px; align-items:end; }
@@ -15,24 +15,23 @@
 {% block content %}
 <section class="section-heading">
     <span class="eyebrow">Parts keeper</span>
-    <h1>我的器材申请</h1>
-    <p class="muted">提交申请、查看审批进度，并按柜号快速找到元件。</p>
+    <h1>我的借用记录</h1>
+    <p class="muted">直接登记借用，无需审批；名称、数量和柜号都留在这里。</p>
 </section>
 
 <div class="parts-stats">
     <div class="parts-stat"><span class="muted">全部</span><strong>{{ counts.total }}</strong></div>
-    <div class="parts-stat"><span class="muted">待审批</span><strong>{{ counts.pending }}</strong></div>
-    <div class="parts-stat"><span class="muted">已批准</span><strong>{{ counts.approved }}</strong></div>
-    <div class="parts-stat"><span class="muted">已拒绝</span><strong>{{ counts.rejected }}</strong></div>
+    <div class="parts-stat"><span class="muted">已登记</span><strong>{{ counts.recorded }}</strong></div>
+    <div class="parts-stat"><span class="muted">历史记录（不代表已借出）</span><strong>{{ counts.historical }}</strong></div>
 </div>
 
 <div class="two-column">
     <section class="panel">
-        <h2>申请记录</h2>
+        <h2>借用记录</h2>
         {% if applications %}
         <div class="table-wrap">
             <table>
-                <thead><tr><th>器材</th><th>用途 / 日期</th><th>位置</th><th>状态</th><th></th></tr></thead>
+                <thead><tr><th>器材</th><th>用途 / 日期</th><th>位置</th><th>记录</th></tr></thead>
                 <tbody>
                 {% for application in applications %}
                     <tr>
@@ -51,27 +50,23 @@
                         <td>{{ application.purpose }}<div class="meta">期望：{{ application.expected_date or '未指定' }} · {{ application.created_at.strftime('%Y-%m-%d %H:%M') }}</div></td>
                         <td>{% if application.cabinet %}{{ application.cabinet.cabinet_number }} 号柜{% else %}<span class="muted">待匹配</span>{% endif %}</td>
                         <td>
-                            <span class="badge {{ application.status }}">{{ {'pending':'待审批','approved':'已批准','rejected':'已拒绝','cancelled':'已取消'}.get(application.status, application.status) }}</span>
-                            {% if application.reject_reason %}<div class="meta">{{ application.reject_reason }}</div>{% endif %}
-                        </td>
-                        <td>
-                            {% if application.status == 'pending' %}
-                            <form method="post" action="{{ url_for('parts.cancel_application', application_id=application.id) }}" data-confirm="确定取消这条申请吗？">
-                                <button class="button small danger" type="submit">取消</button>
-                            </form>
-                            {% endif %}
+                            <span class="badge {{ application.status }}">{{ application.record_status_label }}</span>
+                            <div class="meta">#{{ application.id }}</div>
+                            {% if application.reject_reason %}<div class="meta">历史备注：{{ application.reject_reason }}</div>{% endif %}
                         </td>
                     </tr>
                 {% endfor %}
                 </tbody>
             </table>
         </div>
-        {% else %}<p class="muted">还没有申请记录。</p>{% endif %}
+        {% else %}<p class="muted">还没有借用记录。</p>{% endif %}
     </section>
 
-    <aside class="panel">
-        <h2>新建申请</h2>
+    <aside class="panel" id="borrow-form">
+        <h2>登记借用</h2>
+        <p class="muted">保存后立即生成记录，无需等待。库存数量仍由管理员维护。</p>
         <form method="post" action="{{ url_for('parts.apply_equipment') }}" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div data-item-list>
                 <div class="item-row">
                     <label>器材名称<input name="equipment_names[]" maxlength="200" required></label>
@@ -89,7 +84,7 @@
             <label>用途<textarea name="purpose" maxlength="2000" required></textarea></label>
             <label>期望日期<input type="date" name="expected_date"></label>
             <label>器材照片（最多 8 张）<input type="file" name="equipment_photos[]" accept="image/png,image/jpeg,image/gif,image/bmp,image/webp" multiple></label>
-            <button class="button primary" type="submit">提交申请</button>
+            <button class="button primary" type="submit">保存借用记录</button>
         </form>
     </aside>
 </div>

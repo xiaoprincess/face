@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}人脸录入 - 小智零件社区{% endblock %}
+{% block content %}
+<section class="face-enrollment-shell" data-face-enrollment data-endpoint="{{ url_for('parts.face_register_api') }}">
+    <div class="face-enrollment-card">
+        <p class="eyebrow">FACE PROFILE</p>
+        <h1>{% if current_user.face_registered %}更新人脸信息{% else %}录入人脸信息{% endif %}</h1>
+        <p class="muted">使用当前电脑的摄像头拍照，不会启动树莓派摄像头或云台。</p>
+        <span class="face-enrollment-state" data-face-state>{% if current_user.face_registered %}已录入 · 可重新拍摄更新{% else %}尚未录入{% endif %}</span>
+
+        <div class="registration-face-preview">
+            <video data-face-video playsinline muted hidden></video>
+            <img data-face-photo alt="已拍摄的人脸照片" hidden>
+            <div class="registration-face-placeholder" data-face-placeholder>电脑摄像头画面将在这里显示</div>
+        </div>
+        <div class="registration-face-actions">
+            <button class="button" type="button" data-face-open>打开电脑摄像头</button>
+            <button class="button primary" type="button" data-face-snapshot disabled>拍摄照片</button>
+            <button class="button ghost" type="button" data-face-retake hidden>重新拍摄</button>
+        </div>
+        <canvas data-face-canvas hidden></canvas>
+
+        <form class="face-enrollment-form" data-face-form>
+            <label>确认当前账号密码
+                <input type="password" name="password" required autocomplete="current-password" placeholder="输入密码后才能保存人脸">
+            </label>
+            <p class="registration-face-status" data-face-status>点击“打开电脑摄像头”并允许浏览器访问摄像头。</p>
+            <button class="button primary" type="submit" data-face-submit disabled>{% if current_user.face_registered %}保存并更新人脸{% else %}保存人脸信息{% endif %}</button>
+        </form>
+    </div>
+    <aside class="face-enrollment-help">
+        <h2>拍摄建议</h2>
+        <ol>
+            <li>保持正脸朝向摄像头，避免逆光和遮挡。</li>
+            <li>画面中只保留一张人脸。</li>
+            <li>确认预览清晰后，再输入密码保存。</li>
+        </ol>
+    </aside>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/face-enrollment.js', v='20260928-1') }}"></script>
+{% endblock %}

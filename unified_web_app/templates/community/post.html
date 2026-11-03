@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ post.title }} - 社区{% endblock %}
+{% block title %}{{ post.title }} - 小智零件社区{% endblock %}
 {% block head %}{% include "community/_styles.html" %}{% endblock %}
 {% block content %}
 {% include "community/_nav.html" %}
@@ -9,6 +9,7 @@
     <div class="post-body">{{ post.content }}</div>
     {% if current_user.id == post.user_id or current_user.is_admin %}
         <form action="{{ url_for('community.delete_post', post_id=post.id) }}" method="post" onsubmit="return confirm('确定删除这篇文章？')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="button danger small" type="submit">删除文章</button>
         </form>
     {% endif %}
@@ -16,6 +17,7 @@
 <section class="community-card" style="margin-top:20px">
     <h2>评论</h2>
     <form class="compact-form" action="{{ url_for('community.add_comment', post_id=post.id) }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <textarea name="content" maxlength="5000" required placeholder="写下你的看法；可用 @用户名 提醒成员"></textarea>
         <button class="button primary" type="submit">发表评论</button>
     </form>
@@ -26,7 +28,8 @@
             <div class="row-actions">
                 <button class="button small" type="button" data-reply-to="{{ comment.id }}" data-reply-name="{{ comment.author.username }}">回复</button>
                 {% if current_user.id == comment.user_id or current_user.is_admin %}
-                    <form action="{{ url_for('community.delete_comment', comment_id=comment.id) }}" method="post"><button class="button danger small" type="submit">删除</button></form>
+                    <form action="{{ url_for('community.delete_comment', comment_id=comment.id) }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button danger small" type="submit">删除</button></form>
                 {% endif %}
             </div>
             {% for reply in comment.replies %}
@@ -34,7 +37,8 @@
                     <strong>{{ reply.author.username }}</strong> <span class="meta">{{ reply.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
                     <p class="message-content">{{ reply.content }}</p>
                     {% if current_user.id == reply.user_id or current_user.is_admin %}
-                        <form action="{{ url_for('community.delete_comment', comment_id=reply.id) }}" method="post"><button class="button danger small" type="submit">删除</button></form>
+                        <form action="{{ url_for('community.delete_comment', comment_id=reply.id) }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button danger small" type="submit">删除</button></form>
                     {% endif %}
                 </div>
             {% endfor %}

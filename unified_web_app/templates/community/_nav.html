@@ -1,8 +1,8 @@
 <nav class="community-nav" aria-label="社区导航">
-    <a class="{% if request.endpoint in ['community.index', 'community.post_detail'] %}active{% endif %}" href="{{ url_for('community.index') }}">博客</a>
+    <a class="{% if request.endpoint in ['community.index', 'community.post_detail'] %}active{% endif %}" href="{{ url_for('community.index') }}">社区</a>
     <a class="{% if request.endpoint == 'community.chat' %}active{% endif %}" href="{{ url_for('community.chat') }}">私聊</a>
-    <a class="{% if request.path.startswith('/community/cloud') %}active{% endif %}" href="{{ url_for('community.cloud') }}">云盘</a>
     <a class="{% if request.path.startswith('/community/notifications') %}active{% endif %}" href="{{ url_for('community.notifications') }}">通知</a>
+    <a class="{% if request.path.startswith('/community/cloud') %}active{% endif %}" href="{{ url_for('community.cloud') }}">云盘</a>
     {% if current_user.is_admin %}
         <a class="{% if request.path.startswith('/community/announcements') %}active{% endif %}" href="{{ url_for('community.announcements') }}">公告管理</a>
     {% endif %}

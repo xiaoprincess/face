@@ -1,4 +1,4 @@
-"""Inventory query tools and an authenticated borrow-request tool for Parts Manager."""
+"""Inventory query tools and an authenticated borrow-record tool for Parts Manager."""
 
 from __future__ import annotations
 
@@ -153,12 +153,12 @@ def get_inventory_overview() -> dict:
 
 @mcp.tool()
 def request_part_borrow(component_id: int, quantity: int = 1, request_id: str = "") -> dict:
-    """为用户提交零件借用申请，并在树莓派上执行云台人脸识别。
+    """登记零件借用记录，并在树莓派上执行云台人脸识别。
 
     仅当用户已明确表示要借用、且此前 search_part 已返回唯一且准确的
     component_id 时调用。数量不明确、查询结果有多个相似型号、或用户只是
-    问位置/库存时，必须先继续询问，不能调用此工具。工具成功代表人脸已
-    通过并已创建待审批申请；失败时不要声称申请成功。
+    问位置/库存时，必须先继续询问，不能调用此工具。成功与否及借用状态
+    必须以工具返回为准；成功时借用已登记，无需审批。
     """
 
     try:

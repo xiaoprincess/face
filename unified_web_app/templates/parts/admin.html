@@ -14,24 +14,24 @@
 <div class="parts-stats">
     <a class="parts-stat stat-featured" href="{{ url_for('parts.admin_dashboard', tab='inventory') }}"><span class="stat-icon">{{ icon('box') }}</span><span>收纳柜子</span><strong>{{ cabinets|length }}<small>个</small></strong><span class="stat-caption">打开你的零件收藏 {{ icon('arrow') }}</span></a>
     <a class="parts-stat" href="{{ url_for('parts.admin_dashboard', tab='inventory') }}"><span class="stat-icon">{{ icon('grid') }}</span><span class="muted">零件条目</span><strong>{{ component_count }}<small>项</small></strong><span class="stat-caption">柜内零件，一目了然</span></a>
-    <a class="parts-stat" href="{{ url_for('parts.admin_dashboard', tab='applications') }}"><span class="stat-icon">{{ icon('check') }}</span><span class="muted">等待审批</span><strong>{{ counts.pending }}<small>条</small></strong><span class="stat-caption">共 {{ counts.total }} 条借用记录</span></a>
+    <a class="parts-stat" href="{{ url_for('parts.admin_dashboard', tab='records') }}"><span class="stat-icon">{{ icon('check') }}</span><span class="muted">借用记录</span><strong>{{ counts.recorded }}<small>条</small></strong><span class="stat-caption">直接登记，随时查阅</span></a>
     <a class="parts-stat stat-warning" href="{{ url_for('parts.admin_dashboard', tab='inventory', stock='low') }}"><span class="stat-icon">{{ icon('alert') }}</span><span class="muted">留意库存</span><strong>{{ low_stock_count }}<small>项</small></strong><span class="stat-caption">数量 ≤ 5，点此查看</span></a>
 </div>
 {% endif %}
 
 <nav class="admin-tabs" aria-label="零件管家后台分区">
     <a class="{% if active_tab == 'inventory' %}active{% endif %}" {% if active_tab == 'inventory' %}aria-current="page"{% endif %} href="{{ url_for('parts.admin_dashboard', tab='inventory') }}">{{ icon('box') }}库存管理</a>
-    <a class="{% if active_tab == 'applications' %}active{% endif %}" {% if active_tab == 'applications' %}aria-current="page"{% endif %} href="{{ url_for('parts.admin_dashboard', tab='applications') }}">{{ icon('check') }}申请审批 <span class="tab-count">{{ counts.pending }}</span></a>
+    <a class="{% if active_tab == 'records' %}active{% endif %}" {% if active_tab == 'records' %}aria-current="page"{% endif %} href="{{ url_for('parts.admin_dashboard', tab='records') }}">{{ icon('check') }}借用记录 <span class="tab-count">{{ counts.recorded }}</span></a>
     <a class="{% if active_tab == 'create' %}active{% endif %}" {% if active_tab == 'create' %}aria-current="page"{% endif %} href="{{ url_for('parts.admin_dashboard', tab='create') }}">{{ icon('plus') }}新增柜子</a>
 </nav>
 
-{% if active_tab == 'applications' %}
+{% if active_tab == 'records' %}
 <section class="panel admin-section">
-    <div class="toolbar"><div><h2>借用申请</h2><span class="meta">待审批优先显示 · 已批准 {{ counts.approved }} · 已拒绝 {{ counts.rejected }}</span></div></div>
+    <div class="toolbar"><div><h2>借用记录</h2><span class="meta">按登记时间排序 · 已登记 {{ counts.recorded }} 条{% if counts.historical %} · 历史记录 {{ counts.historical }} 条（不代表已借出）{% endif %}</span></div><a class="button primary" href="{{ url_for('parts.applications') }}#borrow-form">登记借用</a></div>
     {% if applications %}
     <div class="table-wrap">
         <table>
-            <thead><tr><th>申请人</th><th>器材</th><th>用途</th><th>柜子</th><th>状态 / 操作</th></tr></thead>
+            <thead><tr><th>借用人 / 时间</th><th>器材</th><th>用途</th><th>柜子</th><th>记录</th></tr></thead>
             <tbody>
             {% for application in applications %}
                 <tr>
@@ -40,29 +40,22 @@
                     <td>{{ application.purpose }}{% if application.expected_date %}<div class="meta">期望 {{ application.expected_date }}</div>{% endif %}</td>
                     <td>{% if application.cabinet %}{{ application.cabinet.cabinet_number }} 号柜{% else %}<span class="muted">未匹配</span>{% endif %}</td>
                     <td>
-                        <span class="badge {{ application.status }}">{{ {'pending':'待审批','approved':'已批准','rejected':'已拒绝','cancelled':'已取消'}.get(application.status, application.status) }}</span>
-                        {% if application.reject_reason %}<div class="meta">{{ application.reject_reason }}</div>{% endif %}
-                        {% if application.status == 'pending' %}
-                        <div class="review-actions">
-                            <form method="post" action="{{ url_for('parts.approve_application', application_id=application.id) }}"><button class="button small primary" type="submit">批准</button></form>
-                            <details class="reject-disclosure"><summary>拒绝申请</summary><form method="post" action="{{ url_for('parts.reject_application', application_id=application.id) }}">
-                                <textarea name="reject_reason" maxlength="2000" placeholder="拒绝原因" required></textarea>
-                                <button class="button small danger" type="submit">拒绝</button>
-                            </form></details>
-                        </div>
-                        {% endif %}
+                        <span class="badge {{ application.status }}">{{ application.record_status_label }}</span>
+                        <div class="meta">#{{ application.id }}</div>
+                        {% if application.reject_reason %}<div class="meta">历史备注：{{ application.reject_reason }}</div>{% endif %}
                     </td>
                 </tr>
             {% endfor %}
             </tbody>
         </table>
     </div>
-    {% else %}<p class="muted">暂无申请。</p>{% endif %}
+    {% else %}<p class="muted">还没有借用记录。登记后会显示在这里。</p>{% endif %}
 </section>
 {% elif active_tab == 'create' %}
 <section class="panel admin-section create-panel">
     <div class="create-intro"><span class="create-icon" aria-hidden="true">＋</span><div><h2>新增柜子</h2><p class="muted">填写柜号和分类，并一次录入柜内已有零件。</p></div></div>
     <form method="post" action="{{ url_for('parts.cabinet_create') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="two-column">
             <label>柜号<input name="cabinet_number" maxlength="50" placeholder="例如：01" required></label>
             <label>器材分类<input name="equipment_name" maxlength="200" placeholder="例如：传感器与模块" required></label>
@@ -99,6 +92,7 @@
             <details class="cabinet-edit">
                 <summary>{{ icon('edit') }} 编辑柜子与库存 <span aria-hidden="true">＋</span></summary>
                 <form class="cabinet-edit-form" method="post" action="{{ url_for('parts.cabinet_edit', cabinet_id=cabinet.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <label>柜号<input name="cabinet_number" value="{{ cabinet.cabinet_number }}" maxlength="50" required></label>
                 <label>器材分类<input name="equipment_name" value="{{ cabinet.equipment_name }}" maxlength="200" required></label>
                 <label>说明<textarea name="description" maxlength="2000">{{ cabinet.description or '' }}</textarea></label>
@@ -115,7 +109,8 @@
                 </div>
                 <div class="actions"><button class="button small" type="button" data-add-component>添加元件</button><button class="button primary" type="submit">保存</button></div>
                 </form>
-            <form class="cabinet-delete" method="post" action="{{ url_for('parts.cabinet_delete', cabinet_id=cabinet.id) }}" data-confirm="删除柜子后历史申请会保留但解除柜子关联。确定继续吗？">
+            <form class="cabinet-delete" method="post" action="{{ url_for('parts.cabinet_delete', cabinet_id=cabinet.id) }}" data-confirm="删除柜子后历史借用记录会保留但解除柜子关联。确定继续吗？">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button class="button small danger" type="submit">删除柜子</button>
             </form>
             </details>

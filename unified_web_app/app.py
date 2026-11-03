@@ -9,10 +9,10 @@ from dotenv import load_dotenv
 from auth import auth_bp
 from core_models import User
 from extensions import db, login_manager, socketio
+from security import init_csrf
 
 
 BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(BASE_DIR / ".env")
 
 
 def _env_flag(name, default=False):
@@ -35,14 +35,20 @@ def _load_or_create_secret(instance_path):
 
 
 def create_app(test_config=None):
+    testing = bool(test_config and test_config.get("TESTING"))
+    if not testing:
+        load_dotenv(BASE_DIR / ".env")
     app = Flask(__name__, instance_relative_config=True)
-    Path(app.instance_path).mkdir(parents=True, exist_ok=True)
     upload_folder = Path(app.instance_path) / "uploads"
-    upload_folder.mkdir(parents=True, exist_ok=True)
+    if not testing:
+        Path(app.instance_path).mkdir(parents=True, exist_ok=True)
+        upload_folder.mkdir(parents=True, exist_ok=True)
 
     app.config.from_mapping(
-        SECRET_KEY=_load_or_create_secret(app.instance_path),
-        SQLALCHEMY_DATABASE_URI=f"sqlite:///{Path(app.instance_path) / 'unified.db'}",
+        SECRET_KEY="test-only-secret" if testing else None,
+        SQLALCHEMY_DATABASE_URI=(
+            "sqlite://" if testing else f"sqlite:///{Path(app.instance_path) / 'unified.db'}"
+        ),
         SQLALCHEMY_TRACK_MODIFICATIONS=False,
         MAX_CONTENT_LENGTH=16 * 1024 * 1024,
         UPLOAD_FOLDER=str(upload_folder),
@@ -57,6 +63,12 @@ def create_app(test_config=None):
     )
     if test_config:
         app.config.update(test_config)
+    if not app.config["SECRET_KEY"]:
+        app.config["SECRET_KEY"] = (
+            "test-only-secret" if testing else _load_or_create_secret(app.instance_path)
+        )
+
+    init_csrf(app)
 
     db.init_app(app)
     login_manager.init_app(app)
@@ -111,10 +123,18 @@ def create_app(test_config=None):
     return app
 
 
-app = create_app()
+def __getattr__(name):
+    # Preserve WSGI's ``from app import app`` without initializing production
+    # storage or loading configuration when tests import only create_app.
+    if name == "app":
+        instance = create_app()
+        globals()[name] = instance
+        return instance
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 if __name__ == "__main__":
+    app = create_app()
     socketio.run(
         app,
         # 允许同一局域网内的手机访问网站；登录会话仍由 Flask 的 Cookie 管理。

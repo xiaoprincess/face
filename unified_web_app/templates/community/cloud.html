@@ -1,31 +1,40 @@
 {% extends "base.html" %}
-{% block title %}云盘 - 社区{% endblock %}
+{% block title %}云盘 - 小智零件社区{% endblock %}
 {% block head %}{% include "community/_styles.html" %}{% endblock %}
 {% block content %}
 {% include "community/_nav.html" %}
-<section class="section-heading"><p class="eyebrow">Cloud drive</p><h1>云盘</h1><p class="muted">上传、下载和管理项目资料，单文件上限由站点配置控制。</p></section>
-<section class="community-card">
+<section class="section-heading"><p class="eyebrow">项目资料</p><h1>云盘</h1><p class="muted">图纸、代码与数据手册，随时查找，安心收纳。</p></section>
+<section class="community-card bento-upload">
+    <div class="bento-upload-heading"><span aria-hidden="true">{% from '_icons.html' import icon %}{{ icon('folder') }}</span><div><h2>把好资料，收进云盘。</h2><p class="muted">下一次灵感到来时，它们就在这里。</p></div></div>
+    <div class="cloud-usage">
+        <div><strong>我的空间</strong><span>已用 {{ readable_size(user_used) }} / {{ readable_size(user_limit) }}</span></div>
+        <progress max="{{ user_limit if user_limit > 0 else 1 }}" value="{{ [user_used, user_limit]|min }}" aria-label="个人云盘空间使用量"></progress>
+        {% if current_user.is_admin %}<p class="meta">全站空间：已用 {{ readable_size(site_used) }} / {{ readable_size(site_limit) }}</p>{% endif %}
+    </div>
+    <p class="meta">单个文件请小于 {{ readable_size(file_limit) }}。支持文档、图片、压缩包、源代码、电路图和固件。</p>
+    <details class="cloud-formats"><summary>查看支持的文件格式</summary><p>{{ allowed_extensions|join('、') }}</p></details>
     <form class="row-actions" action="{{ url_for('community.upload_file') }}" method="post" enctype="multipart/form-data">
-        <input style="max-width:520px" type="file" name="file" required>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input aria-label="选择要上传的项目文件" style="max-width:520px" type="file" name="file" accept=".{{ allowed_extensions|join(',.') }}" required>
         <button class="button primary" type="submit">上传文件</button>
     </form>
 </section>
 <div class="table-wrap" style="margin-top:20px">
-    <table>
+    <table class="cloud-file-table">
         <thead><tr><th>文件</th>{% if current_user.is_admin %}<th>所有者</th>{% endif %}<th>大小</th><th>上传时间</th><th>操作</th></tr></thead>
         <tbody>
         {% for file in files %}
             <tr>
-                <td>{{ file.original_name }}</td>
-                {% if current_user.is_admin %}<td>{{ file.owner.username }}</td>{% endif %}
-                <td class="file-size">{{ '%.1f'|format(file.file_size / 1024) }} KB</td>
-                <td>{{ file.uploaded_at.strftime('%Y-%m-%d %H:%M') }}</td>
-                <td><div class="row-actions">
+                <td data-label="文件">{{ file.original_name }}</td>
+                {% if current_user.is_admin %}<td data-label="所有者">{{ file.owner.username }}</td>{% endif %}
+                <td data-label="大小" class="file-size">{{ readable_size(file.file_size) }}</td>
+                <td data-label="上传时间">{{ file.uploaded_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                <td data-label="操作"><div class="row-actions">
                     <a class="button small" href="{{ url_for('community.download_file', file_id=file.id) }}">下载</a>
-                    <form action="{{ url_for('community.delete_file', file_id=file.id) }}" method="post" onsubmit="return confirm('确定删除这个文件？')"><button class="button danger small" type="submit">删除</button></form>
+                    <form action="{{ url_for('community.delete_file', file_id=file.id) }}" method="post" onsubmit="return confirm('确定删除这个文件？')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button danger small" type="submit">删除</button></form>
                 </div></td>
             </tr>
-        {% else %}<tr><td colspan="5" class="muted">暂无文件</td></tr>{% endfor %}
+        {% else %}<tr><td colspan="{{ 5 if current_user.is_admin else 4 }}" class="muted">暂无文件</td></tr>{% endfor %}
         </tbody>
     </table>
 </div>

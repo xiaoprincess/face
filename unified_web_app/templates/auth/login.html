@@ -2,10 +2,11 @@
 {% block title %}登录 - 小智零件社区{% endblock %}
 {% block content %}
 <div class="auth-layout">
-<aside class="auth-story"><p class="eyebrow">WELCOME TO YOUR WORKSPACE</p><h2>每一个好想法，<br>都值得被实现<span>.</span></h2><p>零件有位置，资料有归处。<br>和你的伙伴，一起把灵感变成作品。</p><div class="auth-art" aria-hidden="true"><span>✳</span><span>＋</span><span>▦</span></div><div class="auth-story-bottom">零件管理 / 项目社区 / 即时协作</div></aside>
+<aside class="auth-story"><p class="eyebrow">HELLO, MAKER.</p><h2>小零件。<br>大可能<span>。</span></h2><p>带上你的奇思妙想。<br>和伙伴们一起，把它变成现实。</p><div class="bento-login-art">{% include '_bento_art.html' %}<span class="bento-sticker" aria-hidden="true">LET'S<br>MAKE IT!</span></div><div class="auth-story-bottom">零件管理 · 项目博客 · 即时协作</div></aside>
 <section class="auth-card">
     <p class="eyebrow">很高兴再次见到你</p><h1>欢迎回来</h1><p class="auth-intro">登录账号，继续你的创造之旅。</p>
     <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-group">
             <label for="identity">用户名或邮箱</label>
             <input id="identity" type="text" name="identity" class="form-control" placeholder="输入用户名或邮箱" required autocomplete="username">
@@ -17,7 +18,26 @@
         <label class="check"><input type="checkbox" name="remember"> 保持登录</label>
         <button class="button primary" type="submit">进入工作台 →</button>
     </form>
+    <div class="auth-divider"><span>或者</span></div>
+    <section class="face-login-panel" data-face-login data-endpoint="{{ url_for('parts.face_login_api') }}">
+        <div class="face-login-heading"><div><strong>使用人脸登录</strong><small>与零件借用使用同一份人脸信息</small></div><span aria-hidden="true">☺</span></div>
+        <div class="registration-face-preview face-login-preview" data-face-preview hidden>
+            <video data-face-video playsinline muted hidden></video>
+            <img data-face-photo alt="已拍摄的人脸照片" hidden>
+            <div class="registration-face-placeholder" data-face-placeholder>电脑摄像头画面将在这里显示</div>
+        </div>
+        <canvas data-face-canvas hidden></canvas>
+        <div class="registration-face-actions">
+            <button class="button" type="button" data-face-open>打开电脑摄像头</button>
+            <button class="button primary" type="button" data-face-snapshot disabled hidden>拍照并登录</button>
+            <button class="button ghost" type="button" data-face-retry hidden>重新拍摄</button>
+        </div>
+        <p class="registration-face-status" data-face-status>点击按钮后，浏览器会申请当前电脑的摄像头权限。</p>
+    </section>
     <p class="muted">还没有账号？<a href="{{ url_for('auth.register') }}">立即注册</a></p>
 </section>
 </div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/face-login.js', v='20260928-1') }}"></script>
 {% endblock %}
