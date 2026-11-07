@@ -56,6 +56,11 @@ def create_app(test_config=None):
         SESSION_COOKIE_SAMESITE="Lax",
         PARTS_DEVICE_TOKEN=os.environ.get("PARTS_DEVICE_TOKEN", "").strip(),
         PARTS_SKIP_FACE_VERIFICATION=_env_flag("PARTS_SKIP_FACE_VERIFICATION"),
+        PARTS_TAG_TEST_ENABLED=_env_flag("PARTS_TAG_TEST_ENABLED", True),
+        PARTS_TAG_FACE_TIMEOUT=os.environ.get("PARTS_TAG_FACE_TIMEOUT", "30"),
+        PARTS_TAG_LOST_TIMEOUT=os.environ.get("PARTS_TAG_LOST_TIMEOUT", "8"),
+        PARTS_GUIDANCE_TIMEOUT=30.0,
+        PARTS_RECOVER_GUIDANCE_ON_STARTUP=True,
         PARTS_FALLBACK_APPLICANT_EMAIL=os.environ.get(
             "PARTS_FALLBACK_APPLICANT_EMAIL", "xiaozhi-bot@local.test"
         ).strip(),
@@ -116,9 +121,11 @@ def create_app(test_config=None):
             CabinetComponent,
             PartApplication,
             SystemSetting,
+            migrate_parts_schema,
         )
 
         db.create_all()
+        migrate_parts_schema(recover_guidance=app.config["PARTS_RECOVER_GUIDANCE_ON_STARTUP"])
 
     return app
 

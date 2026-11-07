@@ -18,7 +18,7 @@ from parts_models import Cabinet, CabinetComponent, PartApplication, SystemSetti
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_PARTS_DB = BASE_DIR.parent / "web" / "equipment_system.db"
+DEFAULT_PARTS_DB = BASE_DIR.parent / "equipment_system.db"
 DEFAULT_COMMUNITY_DB = BASE_DIR.parent / "my_web_app" / "instance" / "database.db"
 DEFAULT_PARTS_UPLOADS = BASE_DIR.parent / "web" / "static" / "uploads"
 VALID_STATUSES = {"pending", "approved", "rejected", "cancelled"}

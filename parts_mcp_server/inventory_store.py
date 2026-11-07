@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 from typing import Any
+from contextlib import contextmanager
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -20,15 +21,20 @@ def database_path(value: str | None = None) -> Path:
     return Path(value).expanduser().resolve() if value else DEFAULT_DATABASE.resolve()
 
 
-def _connect(path: Path) -> sqlite3.Connection:
+@contextmanager
+def _connect(path: Path):
     if not path.exists():
         raise InventoryStoreError(
             f"未找到库存数据库：{path}。请先启动一次统一网站，或检查 PARTS_DB_PATH。"
         )
     connection = sqlite3.connect(path, timeout=10)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    return connection
+    try:
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        with connection:
+            yield connection
+    finally:
+        connection.close()
 
 
 def _assert_schema(connection: sqlite3.Connection) -> None:

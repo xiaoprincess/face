@@ -1,0 +1,134 @@
+{
+  "source": "192.168.0.100 live SQLite",
+  "retrieved_at": "2026-11-06T22:50:29.395507",
+  "rows": [
+    {
+      "cabinet_id": 1,
+      "cabinet_number": "5",
+      "equipment_name": "零件库存",
+      "component_id": 1,
+      "component_name": "18650移动电源",
+      "quantity": 5
+    },
+    {
+      "cabinet_id": 1,
+      "cabinet_number": "5",
+      "equipment_name": "零件库存",
+      "component_id": 2,
+      "component_name": "mini MP3模块",
+      "quantity": 10
+    },
+    {
+      "cabinet_id": 1,
+      "cabinet_number": "5",
+      "equipment_name": "零件库存",
+      "component_id": 12,
+      "component_name": "舵机",
+      "quantity": 1
+    },
+    {
+      "cabinet_id": 2,
+      "cabinet_number": "20",
+      "equipment_name": "零件库存",
+      "component_id": 3,
+      "component_name": "计时器",
+      "quantity": 3
+    },
+    {
+      "cabinet_id": 3,
+      "cabinet_number": "14",
+      "equipment_name": "零件库存",
+      "component_id": 4,
+      "component_name": "锂电池",
+      "quantity": 20
+    },
+    {
+      "cabinet_id": 3,
+      "cabinet_number": "14",
+      "equipment_name": "零件库存",
+      "component_id": 5,
+      "component_name": "母对母杜邦线",
+      "quantity": 30
+    },
+    {
+      "cabinet_id": 4,
+      "cabinet_number": "11",
+      "equipment_name": "零件库存",
+      "component_id": 6,
+      "component_name": "加湿模块",
+      "quantity": 5
+    },
+    {
+      "cabinet_id": 4,
+      "cabinet_number": "11",
+      "equipment_name": "零件库存",
+      "component_id": 7,
+      "component_name": "空心杯电机",
+      "quantity": 6
+    },
+    {
+      "cabinet_id": 5,
+      "cabinet_number": "15",
+      "equipment_name": "零件库存",
+      "component_id": 8,
+      "component_name": "自攻螺丝",
+      "quantity": 50
+    },
+    {
+      "cabinet_id": 5,
+      "cabinet_number": "15",
+      "equipment_name": "零件库存",
+      "component_id": 9,
+      "component_name": "自攻螺丝",
+      "quantity": 40
+    },
+    {
+      "cabinet_id": 5,
+      "cabinet_number": "15",
+      "equipment_name": "零件库存",
+      "component_id": 10,
+      "component_name": "M4方形螺母、M4防滑螺母",
+      "quantity": 35
+    },
+    {
+      "cabinet_id": 5,
+      "cabinet_number": "15",
+      "equipment_name": "零件库存",
+      "component_id": 11,
+      "component_name": "M6圆头十字螺丝",
+      "quantity": 40
+    },
+    {
+      "cabinet_id": 6,
+      "cabinet_number": "6",
+      "equipment_name": "母对母杜邦线",
+      "component_id": 16,
+      "component_name": "母对母杜邦线",
+      "quantity": 0
+    },
+    {
+      "cabinet_id": 7,
+      "cabinet_number": "1",
+      "equipment_name": "万向轮",
+      "component_id": 13,
+      "component_name": "万向轮",
+      "quantity": 0
+    },
+    {
+      "cabinet_id": 8,
+      "cabinet_number": "3",
+      "equipment_name": "24双头变压器",
+      "component_id": 14,
+      "component_name": "24双头变压器",
+      "quantity": 0
+    },
+    {
+      "cabinet_id": 9,
+      "cabinet_number": "4",
+      "equipment_name": "公对公杜邦线",
+      "component_id": 15,
+      "component_name": "公对公杜邦线",
+      "quantity": 0
+    }
+  ]
+}

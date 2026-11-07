@@ -5,8 +5,10 @@ import logging
 import re
 import secrets
 import threading
+import time
 import uuid
 from datetime import date
+from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
 
@@ -24,16 +26,57 @@ from flask import (
 )
 from flask_login import current_user, login_required, login_user
 from werkzeug.utils import secure_filename
+from sqlalchemy.exc import IntegrityError
 
+from apriltag_test import JobCapacityError, JobConflictError, registry as tag_test_registry
 from core_models import User
 from extensions import db, utc_now
 from hardware import HardwareUnavailable, hardware
-from parts_models import Cabinet, CabinetComponent, PartApplication, SystemSetting
+from parts_models import Cabinet, CabinetComponent, InventoryMovement, PartApplication, SystemSetting
 
 
 parts_bp = Blueprint("parts", __name__, url_prefix="/parts")
 logger = logging.getLogger(__name__)
 device_borrow_lock = threading.RLock()
+tag_owner_lock = threading.RLock()
+active_tag_job = None
+
+
+@contextmanager
+def _tag_job_ownership(job):
+    """Use inside device_borrow_lock; serialize owner handoff and emergency stop."""
+    global active_tag_job
+    with tag_owner_lock:
+        active_tag_job = job
+    try:
+        yield
+    finally:
+        with tag_owner_lock:
+            if active_tag_job is job:
+                active_tag_job = None
+            job.cancel_timers()
+
+
+def _stop_owned_tag_job(job):
+    with tag_owner_lock:
+        if active_tag_job is not job:
+            return None
+        try:
+            return hardware.emergency_stop() is True
+        except Exception:
+            logger.exception("任务紧急停止失败")
+            return False
+
+# Tag family used by the pan/tilt camera. tag36h11 defines ids 0..586.
+APRILTAG_FAMILY = "tag36h11"
+APRILTAG_MAX_ID = 586
+TAG_TEST_DEFAULT_TIMEOUT = 45.0
+TAG_TEST_MIN_TIMEOUT = 10.0
+TAG_TEST_MAX_TIMEOUT = 180.0
+TAG_TEST_FORCE_STOP_GRACE = 15.0
+TAG_FACE_TIMEOUT_DEFAULT = 30.0
+TAG_FACE_TIMEOUT_MIN = 5.0
+TAG_FACE_TIMEOUT_MAX = 60.0
 
 ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "bmp", "webp"}
 SETTING_RULES = {
@@ -188,7 +231,21 @@ def _match_cabinet(equipment_names):
     return best_cabinet
 
 
-def _create_application(user_id, items, purpose, expected_date=None, cabinet=None, photos=None):
+def _create_application(user_id, items, purpose, expected_date=None, cabinet=None, photos=None,
+                        component_quantities=None, request_id=None, request_payload=None):
+    # Only explicit ids authorize stock changes. Free text is a legacy record.
+    quantities = {}
+    for component_id, quantity in component_quantities or []:
+        quantity = _parse_borrow_quantity(quantity)
+        quantities[component_id] = quantities.get(component_id, 0) + quantity
+    if quantities:
+        components = [db.session.get(CabinetComponent, component_id) for component_id in quantities]
+        if any(component is None for component in components):
+            raise ValueError("所选库存零件不存在")
+        if len({component.cabinet_id for component in components}) != 1:
+            raise ValueError("一次库存借用只能选择同一柜子的零件")
+        cabinet = components[0].cabinet
+        items = [(component.component_name, str(quantities[component.id])) for component in components]
     if cabinet is None:
         cabinet = _match_cabinet([name for name, _quantity in items])
     application = PartApplication(
@@ -200,17 +257,35 @@ def _create_application(user_id, items, purpose, expected_date=None, cabinet=Non
         expected_date=expected_date,
         cabinet=cabinet,
         status="approved",  # Legacy DB value for a completed, directly recorded loan.
+        request_id=request_id,
+        request_payload=request_payload,
+        inventory_managed=bool(quantities),
+        guidance_status=("queued" if cabinet and not current_app.config.get("PARTS_SKIP_FACE_VERIFICATION") else "skipped"),
+        guidance_message=("等待指引" if cabinet and not current_app.config.get("PARTS_SKIP_FACE_VERIFICATION") else "未关联柜子或已跳过硬件指引"),
+        guidance_updated_at=utc_now(),
     )
     db.session.add(application)
     db.session.flush()
+    for component_id, quantity in sorted(quantities.items()):
+        changed = CabinetComponent.query.filter(
+            CabinetComponent.id == component_id, CabinetComponent.quantity >= quantity,
+        ).update({CabinetComponent.quantity: CabinetComponent.quantity - quantity}, synchronize_session=False)
+        if changed != 1:
+            raise ValueError("库存不足，请重新查询可用库存")
+        balance = db.session.query(CabinetComponent.quantity).filter_by(id=component_id).scalar()
+        db.session.add(InventoryMovement(application_id=application.id, component_id=component_id,
+                                         kind="borrow", delta=-quantity, quantity_after=balance, actor_id=user_id))
+    db.session.flush()
+    # Bulk conditional updates must not leave cached component quantities stale.
+    db.session.expire_all()
     return application
 
 
 def _application_counts(query):
     applications = query.all()
-    counts = {"recorded": 0, "historical": 0}
+    counts = {"recorded": 0, "historical": 0, "returned": 0}
     for application in applications:
-        key = "recorded" if application.record_status == "recorded" else "historical"
+        key = application.record_status if application.record_status in {"recorded", "returned"} else "historical"
         counts[key] += 1
     counts["total"] = len(applications)
     return applications, counts
@@ -248,7 +323,17 @@ def applications():
 def apply_equipment():
     saved_photos = []
     try:
-        items = _form_items()
+        selected = request.form.getlist("component_ids[]")
+        quantities = request.form.getlist("quantities[]")
+        component_quantities = None
+        if any(selected):
+            if not all(selected) or len(selected) != len(quantities):
+                raise ValueError("库存借用请为每项选择零件；自由文本请单独登记")
+            component_quantities = [(int(component_id), _parse_borrow_quantity(quantity))
+                                    for component_id, quantity in zip(selected, quantities)]
+            items = []  # Names are taken from the selected ids by the transaction.
+        else:
+            items = _form_items()
         purpose = request.form.get("purpose", "").strip()
         if not purpose:
             raise ValueError("请填写借用用途")
@@ -266,16 +351,18 @@ def apply_equipment():
                 raise ValueError("所选柜子不存在")
 
         saved_photos = _save_uploaded_images(request.files.getlist("equipment_photos[]"))
-        _create_application(
+        application = _create_application(
             current_user.id,
             items,
             purpose,
             expected_date=_parse_expected_date(request.form.get("expected_date")),
             cabinet=cabinet,
             photos=saved_photos,
+            component_quantities=component_quantities,
         )
         db.session.commit()
-        flash("借用记录已保存，无需审批", "success")
+        _point_after_application(application)
+        flash("借用已保存并扣减可用库存" if application.inventory_managed else "自由文本记录已保存，未关联库存，不支持归还入库", "success")
     except ValueError as exc:
         db.session.rollback()
         for filename in saved_photos:
@@ -407,10 +494,46 @@ def cabinet_edit(cabinet_id):
             url_for("parts.admin_dashboard", tab="inventory", _anchor=f"cabinet-{cabinet.id}")
         )
     try:
+        ids = request.form.getlist("component_ids[]")
+        names = request.form.getlist("component_names[]")
+        rows = _component_rows()
+        if ids:
+            originals = request.form.getlist("component_original_quantities[]")
+            if len(ids) != len(names) or len(originals) != len(names):
+                raise ValueError("零件列表已过期，请刷新页面后编辑")
+            existing = {item.id: item for item in cabinet.components}
+            seen = set()
+            row_iter = iter(rows)
+            for index, name in enumerate(names):
+                if not str(name or "").strip():
+                    continue
+                row = next(row_iter)
+                if not ids[index]:
+                    db.session.add(CabinetComponent(cabinet=cabinet, **row))
+                    continue
+                try:
+                    component_id = int(ids[index])
+                    old_quantity = int(originals[index])
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("零件编号或原始库存无效，请刷新页面") from exc
+                if component_id not in existing or component_id in seen:
+                    raise ValueError("零件编号不属于该柜或重复")
+                seen.add(component_id)
+                changed = CabinetComponent.query.filter_by(id=component_id, cabinet_id=cabinet.id, quantity=old_quantity).update(row, synchronize_session=False)
+                if changed != 1:
+                    raise ValueError("库存已被借还操作更新，请刷新后重新编辑")
+            for component_id, component in existing.items():
+                if component_id not in seen:
+                    if InventoryMovement.query.filter_by(component_id=component_id).first():
+                        raise ValueError("有借还流水的零件不能删除，可保留编号修改名称和数量")
+                    db.session.delete(component)
+        else:
+            if _cabinet_has_inventory_history(cabinet.id):
+                raise ValueError("该柜有库存借还流水，不能重建零件；请刷新后保留原零件编号编辑")
+            cabinet.components = [CabinetComponent(**row) for row in rows]
         cabinet.cabinet_number = cabinet_number[:50]
         cabinet.equipment_name = equipment_name[:200]
         cabinet.description = request.form.get("description", "").strip()[:2000] or None
-        cabinet.components = [CabinetComponent(**row) for row in _component_rows()]
         db.session.commit()
         flash("柜子已更新", "success")
     except ValueError as exc:
@@ -428,6 +551,9 @@ def cabinet_delete(cabinet_id):
     cabinet = db.session.get(Cabinet, cabinet_id)
     if cabinet is None:
         abort(404)
+    if _cabinet_has_inventory_history(cabinet.id):
+        flash("该柜有库存借还流水，不能删除", "error")
+        return redirect(url_for("parts.admin_dashboard", tab="inventory"))
     PartApplication.query.filter_by(cabinet_id=cabinet.id).update({"cabinet_id": None})
     db.session.delete(cabinet)
     db.session.commit()
@@ -447,6 +573,9 @@ def cabinet_batch_delete():
         except (TypeError, ValueError):
             continue
     if ids:
+        if any(_cabinet_has_inventory_history(cabinet_id) for cabinet_id in ids):
+            flash("所选柜子有库存借还流水，未执行批量删除", "error")
+            return redirect(url_for("parts.admin_dashboard", tab="inventory"))
         PartApplication.query.filter(PartApplication.cabinet_id.in_(ids)).update(
             {"cabinet_id": None}, synchronize_session=False
         )
@@ -531,6 +660,44 @@ def hardware_status():
     status = hardware.status(current_app.config)
     status["device_auth_configured"] = _device_token_configured()
     return jsonify(status), 200 if status["available"] else 503
+
+
+class FaceMatch(tuple):
+    """Preserve the face-library ID without changing two-value unpacking."""
+
+    def __new__(cls, user, score, face_id):
+        value = super().__new__(cls, (user, score))
+        value.face_id = str(face_id)
+        return value
+
+
+def _face_result_legacy(image):
+    """Baidu search exactly like web/start.py: no quality/liveness options, score >= 70."""
+
+    try:
+        result = hardware.search_face_raw(image, current_app.config, _group_id())
+    except HardwareUnavailable:
+        raise
+    if result.get("error_code") != 0:
+        return None, f"人脸服务返回错误: {result.get('error_msg', 'unknown')}"
+    matches = result.get("result", {}).get("user_list", [])
+    if not matches:
+        return None, "未找到匹配人脸"
+    match = matches[0]
+    try:
+        score = float(match.get("score", 0))
+    except (TypeError, ValueError):
+        score = 0.0
+    if score < 70:
+        return None, f"匹配度过低（{score:.1f}）"
+    try:
+        user_id = int(match.get("user_id", ""))
+    except (TypeError, ValueError):
+        return None, "人脸服务返回的用户编号无效"
+    user = db.session.get(User, user_id)
+    if user is None:
+        return None, "匹配用户不存在"
+    return FaceMatch(user, score, match['user_id']), None
 
 
 def _face_result(image):
@@ -646,7 +813,17 @@ def _device_token_configured():
     return bool(str(current_app.config.get("PARTS_DEVICE_TOKEN") or "").strip())
 
 
+def _cabinet_has_inventory_history(cabinet_id):
+    # Acquire a write lock before checking, closing check/delete races on SQLite.
+    Cabinet.query.filter_by(id=cabinet_id).update({Cabinet.id: Cabinet.id}, synchronize_session=False)
+    return db.session.query(InventoryMovement.id).join(
+        CabinetComponent, InventoryMovement.component_id == CabinetComponent.id,
+    ).filter(CabinetComponent.cabinet_id == cabinet_id).first() is not None
+
+
 def _parse_borrow_quantity(raw_value):
+    if isinstance(raw_value, bool) or not re.fullmatch(r"[0-9]+", str(raw_value).strip()):
+        raise ValueError("借用数量必须是整数")
     try:
         quantity = int(raw_value)
     except (TypeError, ValueError) as exc:
@@ -665,6 +842,63 @@ def _parse_borrow_request_id(raw_value):
     return request_id
 
 
+def _tag_test_enabled():
+    return bool(current_app.config.get("PARTS_TAG_TEST_ENABLED", True))
+
+
+def _tag_lost_timeout():
+    """Seconds the camera keeps waiting for the target tag before failing."""
+
+    try:
+        value = float(current_app.config.get("PARTS_TAG_LOST_TIMEOUT", 8))
+    except (TypeError, ValueError):
+        value = 8.0
+    return min(max(value, 2.0), 30.0)
+
+
+def _tag_face_timeout():
+    """How long the camera keeps retrying face recognition, like the old Pi flow."""
+
+    try:
+        value = float(current_app.config.get("PARTS_TAG_FACE_TIMEOUT", TAG_FACE_TIMEOUT_DEFAULT))
+    except (TypeError, ValueError):
+        value = TAG_FACE_TIMEOUT_DEFAULT
+    return min(max(value, TAG_FACE_TIMEOUT_MIN), TAG_FACE_TIMEOUT_MAX)
+
+
+def _parse_tag_id(raw_value):
+    try:
+        tag_id = int(str(raw_value).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError("AprilTag ID 必须是整数") from exc
+    if tag_id < 0 or tag_id > APRILTAG_MAX_ID:
+        raise ValueError(f"AprilTag ID 必须在 0 到 {APRILTAG_MAX_ID} 之间（{APRILTAG_FAMILY}）")
+    return tag_id
+
+
+def _parse_tag_test_request_id(raw_value):
+    request_id = str(raw_value or "").strip()
+    if not request_id:
+        raise ValueError("缺少测试请求编号")
+    if len(request_id) > 80 or not all(char.isalnum() or char in "-_" for char in request_id):
+        raise ValueError("测试请求编号只能包含字母、数字、连字符或下划线")
+    return request_id
+
+
+def _parse_tag_test_timeout(raw_value):
+    if raw_value in (None, ""):
+        return TAG_TEST_DEFAULT_TIMEOUT
+    try:
+        timeout = float(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("定位时限必须是数字") from exc
+    if not TAG_TEST_MIN_TIMEOUT <= timeout <= TAG_TEST_MAX_TIMEOUT:
+        raise ValueError(
+            f"定位时限必须在 {TAG_TEST_MIN_TIMEOUT:.0f} 到 {TAG_TEST_MAX_TIMEOUT:.0f} 秒之间"
+        )
+    return timeout
+
+
 def _borrow_result(application, request_id, score=None, duplicate=False):
     result = {
         "success": True,
@@ -677,6 +911,13 @@ def _borrow_result(application, request_id, score=None, duplicate=False):
         "items": application.equipment_items,
         "cabinet_number": application.cabinet.cabinet_number if application.cabinet else "",
         "duplicate": duplicate,
+        "inventory_managed": application.inventory_managed,
+        "inventory_status": application.inventory_status,
+        "returned_at": application.returned_at.isoformat() if application.returned_at else None,
+        "guidance_status": application.guidance_status,
+        "guidance_status_label": application.guidance_status_label,
+        "guidance_message": application.guidance_message or "",
+        "status_url": url_for("parts.device_borrow_status_api", request_id=request_id) if request_id else url_for("parts.application_status_api", application_id=application.id),
     }
     if score is not None:
         result["face_score"] = round(float(score), 1)
@@ -684,17 +925,44 @@ def _borrow_result(application, request_id, score=None, duplicate=False):
 
 
 def _existing_borrow_request(request_id):
-    marker = f"[MCP 借用请求:{request_id}]"
-    escaped_marker = (
-        marker.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    )
-    return (
-        PartApplication.query.filter(
-            PartApplication.purpose.like(f"%{escaped_marker}%", escape="\\")
+    return PartApplication.query.filter_by(request_id=request_id).first()
+
+
+def _borrow_payload(component_id, quantity, source):
+    return json.dumps({"component_id": component_id, "quantity": quantity, "source": source}, sort_keys=True)
+
+
+def _duplicate_borrow_result(existing, payload):
+    if existing.request_payload != payload or not existing.inventory_managed:
+        return {"success": False, "message": "请求编号已使用且参数不同，或属于无法核对库存的历史记录", "duplicate": True, "record_id": existing.id}, 409
+    return _borrow_result(existing, existing.request_id, duplicate=True), 200
+
+
+def _commit_device_borrow(user_id, component, quantity, request_id, source, purpose, score=None):
+    payload = _borrow_payload(component.id, quantity, source)
+    try:
+        application = _create_application(
+            user_id, [], purpose, component_quantities=[(component.id, quantity)],
+            request_id=request_id, request_payload=payload,
         )
-        .order_by(PartApplication.id.desc())
-        .first()
-    )
+        db.session.commit()
+    except IntegrityError:
+        # Other workers/processes are arbitrated by the DB unique index.
+        db.session.rollback()
+        existing = _existing_borrow_request(request_id)
+        if existing is not None:
+            return _duplicate_borrow_result(existing, payload)
+        logger.exception("库存流水约束冲突")
+        return {"success": False, "message": "库存事务冲突，请重试"}, 409
+    except ValueError as exc:
+        db.session.rollback()
+        return {"success": False, "message": str(exc)}, 409
+    except Exception:
+        db.session.rollback()
+        logger.exception("保存借用库存事务失败")
+        return {"success": False, "message": "借用登记失败，请稍后重试"}, 500
+    _point_after_application(application)
+    return _borrow_result(application, request_id, score=score), 201
 
 
 def _hardware_ready_for_device_borrow():
@@ -723,27 +991,13 @@ def _run_borrow_without_face(component, quantity, request_id, source):
             "message": "跳过人脸识别时使用的系统借用账号不存在。",
         }, 503
 
-    try:
-        application = _create_application(
-            user.id,
-            [(component.component_name, str(quantity))],
-            f"[MCP 借用请求:{request_id}] [未进行人脸识别] 来源: {source}，摄像头暂不可用",
-            cabinet=component.cabinet,
-        )
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
-        logger.exception("创建免人脸识别借用记录失败")
-        return {"success": False, "message": "借用记录创建失败，请稍后重试。"}, 500
-
-    result = _borrow_result(application, request_id)
-    result.update(
-        {
-            "message": "借用已登记，无需审批；本次未进行人脸识别。",
-            "face_verification": "skipped",
-        }
+    result, status_code = _commit_device_borrow(
+        user.id, component, quantity, request_id, source,
+        f"[MCP 借用请求:{request_id}] [未进行人脸识别] 来源: {source}",
     )
-    return result, 201
+    if result.get("success"):
+        result["face_verification"] = "skipped"
+    return result, status_code
 
 
 def _run_device_borrow(component_id, quantity, request_id, source):
@@ -751,16 +1005,7 @@ def _run_device_borrow(component_id, quantity, request_id, source):
 
     existing = _existing_borrow_request(request_id)
     if existing is not None:
-        if existing.record_status != "recorded":
-            return {
-                "success": False,
-                "message": "该请求编号属于历史未完成记录，请重新发起借用登记。",
-                "record_id": existing.id,
-                "application_id": existing.id,
-                "status": existing.record_status,
-                "duplicate": True,
-            }, 409
-        return _borrow_result(existing, request_id, duplicate=True), 200
+        return _duplicate_borrow_result(existing, _borrow_payload(component_id, quantity, source))
 
     component = db.session.get(CabinetComponent, component_id)
     if component is None:
@@ -789,14 +1034,11 @@ def _run_device_borrow(component_id, quantity, request_id, source):
             return {"success": False, "message": message or "人脸识别失败"}, 401
 
         user, score = matched
-        application = _create_application(
-            user.id,
-            [(component.component_name, str(quantity))],
+        return _commit_device_borrow(
+            user.id, component, quantity, request_id, source,
             f"[MCP 借用请求:{request_id}] [人脸识别借用登记] 来源: {source}，匹配分数: {score:.1f}",
-            cabinet=component.cabinet,
+            score=score,
         )
-        db.session.commit()
-        result = _borrow_result(application, request_id, score=score)
     except (HardwareUnavailable, ValueError) as exc:
         db.session.rollback()
         return {"success": False, "message": str(exc)}, 503
@@ -804,10 +1046,6 @@ def _run_device_borrow(component_id, quantity, request_id, source):
         db.session.rollback()
         logger.exception("处理 MCP 借用登记失败")
         return {"success": False, "message": "借用登记失败，请稍后重试。"}, 500
-
-    _point_after_application(application)
-    return result, 201
-
 
 @parts_bp.route("/api/device/borrow", methods=["POST"])
 def device_borrow_api():
@@ -831,6 +1069,306 @@ def device_borrow_api():
     with device_borrow_lock:
         result, status_code = _run_device_borrow(component_id, quantity, request_id, source)
     return jsonify(result), status_code
+
+
+@parts_bp.route("/api/device/borrow/<request_id>")
+def device_borrow_status_api(request_id):
+    if not _device_token_configured():
+        return jsonify({"success": False, "message": "设备接口未配置"}), 503
+    if not _device_authorized():
+        return jsonify({"success": False, "message": "设备认证失败"}), 401
+    application = _existing_borrow_request(request_id)
+    if application is None:
+        abort(404)
+    return jsonify(_borrow_result(application, request_id))
+
+
+@parts_bp.route("/api/applications/<int:application_id>")
+@login_required
+def application_status_api(application_id):
+    application = db.session.get(PartApplication, application_id)
+    if application is None:
+        abort(404)
+    if application.user_id != current_user.id and not current_user.is_admin:
+        abort(403)
+    return jsonify({"success": True, **application.to_dict()})
+
+
+@parts_bp.route("/api/applications/<int:application_id>/return", methods=["POST"])
+@parts_bp.route("/applications/<int:application_id>/return", methods=["POST"])
+@login_required
+def return_application(application_id):
+    def respond(success, message, code):
+        if request.path.startswith("/parts/api/"):
+            return jsonify({"success": success, "message": message, "record_id": application_id}), code
+        flash(message, "success" if success else "error")
+        return redirect(url_for("parts.applications"))
+
+    application = db.session.get(PartApplication, application_id)
+    if application is None:
+        abort(404)
+    if application.user_id != current_user.id and not current_user.is_admin:
+        abort(403)
+    if not application.inventory_managed:
+        return respond(False, "历史或自由文本记录未扣减库存，不能归还入库", 409)
+    try:
+        claimed = PartApplication.query.filter_by(
+            id=application_id, inventory_managed=True, returned_at=None, status="approved",
+        ).update({"returned_at": utc_now(), "returned_by_id": current_user.id}, synchronize_session=False)
+        if claimed != 1:
+            db.session.rollback()
+            return respond(False, "该借用已归还或状态不允许归还", 409)
+        PartApplication.query.filter_by(id=application_id, guidance_status="queued").update({
+            "guidance_status": "cancelled", "guidance_message": "借用已归还，取消排队指引",
+            "guidance_updated_at": utc_now(),
+        }, synchronize_session=False)
+        movements = InventoryMovement.query.filter_by(application_id=application_id, kind="borrow").order_by(InventoryMovement.component_id).all()
+        if not movements:
+            raise ValueError("缺少原始库存扣减流水，不能自动入库")
+        for movement in movements:
+            changed = CabinetComponent.query.filter_by(id=movement.component_id).update(
+                {CabinetComponent.quantity: CabinetComponent.quantity - movement.delta}, synchronize_session=False,
+            )
+            if changed != 1:
+                raise ValueError("原库存零件已不存在，需要人工核对")
+            balance = db.session.query(CabinetComponent.quantity).filter_by(id=movement.component_id).scalar()
+            db.session.add(InventoryMovement(application_id=application_id, component_id=movement.component_id,
+                                             kind="return", delta=-movement.delta, quantity_after=balance, actor_id=current_user.id))
+        db.session.commit()
+        return respond(True, "已归还并恢复可用库存", 200)
+    except (ValueError, IntegrityError) as exc:
+        db.session.rollback()
+        return respond(False, str(exc) if isinstance(exc, ValueError) else "归还事务冲突，请刷新核对", 409)
+    except Exception:
+        db.session.rollback()
+        logger.exception("归还库存事务失败")
+        return respond(False, "归还失败，请稍后重试", 500)
+
+
+def _run_tag_test_job(app, job, pan, tilt, laser_delay, align_timeout):
+    """Run one AprilTag test.  Never writes borrow records or changes inventory."""
+
+    with app.app_context():
+        try:
+            with device_borrow_lock, _tag_job_ownership(job):
+                if job.state != "running":
+                    return
+                if job.cancel_event.is_set():
+                    job.cancelled("排队期间已取消，未执行硬件操作")
+                    return
+                face_result = hardware.capture_face_until_matched(
+                    pan,
+                    tilt,
+                    _face_result_legacy,
+                    deadline=time.monotonic() + _tag_face_timeout(),
+                    cancel_event=job.cancel_event,
+                    on_stage=job.stage,
+                ) or {}
+                face_status = str(face_result.get("status") or "hardware_error")
+                attempts = int(face_result.get("attempts") or 0)
+                job.set_face_attempts(attempts)
+                if face_status == "cancelled":
+                    job.cancelled(
+                        face_result.get("message") or "用户取消，已停止测试",
+                        stage="face_verify",
+                    )
+                    return
+                if face_status != "matched":
+                    code = "face_timeout" if face_status == "timeout" else "face_failed"
+                    job.fail(
+                        code,
+                        face_result.get("message") or "人脸识别失败",
+                        stage="face_verify",
+                    )
+                    return
+                user, score = face_result["matched"]
+                face_id = getattr(face_result['matched'], 'face_id', str(user.id))
+                job.set_user(user.username, round(float(score), 1), face_id=face_id, user_id=user.id)
+                job.stage('face_matched', f'人脸识别通过：{user.username}，人脸 ID：{face_id}')
+                if job.cancel_event.is_set():
+                    job.cancelled("用户取消，已停止测试")
+                    return
+
+                point = hardware.point_to_cabinet_status(
+                    job.tag_id,
+                    delay=laser_delay,
+                    timeout=align_timeout,
+                    cancel_event=job.cancel_event,
+                    on_stage=job.stage,
+                    lost_timeout=_tag_lost_timeout(),
+                ) or {}
+                status = str(point.get("status") or "hardware_error")
+                if status == "aligned":
+                    job.stage("done")
+                    stages = job.snapshot()["stages"]
+                    job.succeed(
+                        {
+                            "success": True,
+                            "status": "aligned",
+                            "tag_id": job.tag_id,
+                            "message": f"已通过人脸识别并对准标签 {job.tag_id}",
+                            "username": user.username,
+                            "face_id": face_id,
+                            "user_id": user.id,
+                            "face_score": round(float(score), 1),
+                            "face_attempts": attempts,
+                            "point": point,
+                            "stages": stages,
+                            "borrow_record_created": False,
+                        }
+                    )
+                elif status == "cancelled":
+                    job.cancelled(
+                        point.get("message") or "用户取消，已停止测试", stage="align"
+                    )
+                elif status == "timeout":
+                    job.timed_out(point.get("message") or "定位超时", stage="align")
+                elif status == "lost":
+                    job.fail(
+                        "tag_not_found",
+                        point.get("message") or "未在视野中找到目标标签",
+                        stage="align",
+                    )
+                else:
+                    job.fail(
+                        "hardware_error",
+                        point.get("message") or "云台定位异常",
+                        stage="align",
+                    )
+        except HardwareUnavailable as exc:
+            job.fail("hardware_unavailable", str(exc))
+        except Exception:
+            logger.exception("AprilTag 测试执行失败")
+            job.fail("error", "测试执行异常，请查看网站日志")
+        finally:
+            job.finish_worker()
+
+
+def _tag_test_force_stop(job):
+    # Force the motors to stop even if the worker thread is stuck in a blocking
+    # capture or Baidu call; the job state alone does not stop hardware.
+    with tag_owner_lock:
+        if job.snapshot()["terminal"]:
+            return
+        stopped = _stop_owned_tag_job(job)
+        job.stop_confirmed = stopped
+        message = "测试超过最终时限；已向两轴和指示灯成功发送停止命令" if stopped else "测试超过最终时限；硬件停止未确认"
+        job.timed_out(message, stage="align")
+
+
+def _tag_test_watchdog(job, align_timeout):
+    with tag_owner_lock:
+        if job.snapshot()["terminal"]:
+            return
+        job.request_cancel()
+        job.schedule_timer(TAG_TEST_FORCE_STOP_GRACE, _tag_test_force_stop, (job,))
+
+
+@parts_bp.route("/api/device/cabinets")
+def device_cabinets_api():
+    """Complete cabinet list for the desktop AprilTag test client."""
+
+    if not _device_token_configured():
+        return jsonify({"success": False, "message": "设备接口未配置 PARTS_DEVICE_TOKEN"}), 503
+    if not _device_authorized():
+        return jsonify({"success": False, "message": "设备认证失败"}), 401
+
+    cabinets = Cabinet.query.order_by(Cabinet.cabinet_number).all()
+    payload = []
+    for cabinet in cabinets:
+        item = cabinet.to_dict()
+        item["updated_at"] = cabinet.updated_at.isoformat() if cabinet.updated_at else None
+        payload.append(item)
+    return jsonify(
+        {
+            "success": True,
+            "source": "raspberry-pi",
+            "generated_at": utc_now().isoformat(),
+            "cabinet_count": len(payload),
+            "component_count": sum(len(item["components"]) for item in payload),
+            "cabinets": payload,
+        }
+    )
+
+
+@parts_bp.route("/api/device/tag-test", methods=["POST"])
+def device_tag_test_start_api():
+    if not _tag_test_enabled():
+        return jsonify({"success": False, "message": "标签测试接口未启用"}), 503
+    if not _device_token_configured():
+        return jsonify({"success": False, "message": "设备接口未配置 PARTS_DEVICE_TOKEN"}), 503
+    if not _device_authorized():
+        return jsonify({"success": False, "message": "设备认证失败"}), 401
+
+    data = request.get_json(silent=True) or {}
+    try:
+        tag_id = _parse_tag_id(data.get("tag_id"))
+        request_id = _parse_tag_test_request_id(data.get("request_id"))
+        timeout = _parse_tag_test_timeout(data.get("timeout_seconds"))
+    except ValueError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 400
+
+    try:
+        job, created = tag_test_registry.create(request_id, tag_id)
+    except JobCapacityError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 429, {"Retry-After": "5"}
+    except JobConflictError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 409
+    if not created:
+        return jsonify({"success": True, "created": False, **job.snapshot()}), 202
+
+    try:
+        app = current_app._get_current_object()
+        worker = threading.Thread(
+            target=_run_tag_test_job,
+            args=(
+                app,
+                job,
+                _setting_float("face_pan_angle"),
+                _setting_float("face_tilt_angle"),
+                _setting_float("laser_delay"),
+                timeout,
+            ),
+            name=f"tag-test-{request_id}",
+            daemon=True,
+        )
+        job.attach_worker(worker)
+        worker.start()
+    except Exception:
+        job.fail("worker_start_failed", "无法启动测试线程")
+        job.finish_worker()
+        logger.exception("无法启动 AprilTag 测试线程")
+        return jsonify({"success": False, **job.snapshot()}), 503
+    job.schedule_timer(timeout + 60.0, _tag_test_watchdog, (job, timeout))
+    return jsonify({"success": True, "created": True, **job.snapshot()}), 202
+
+
+@parts_bp.route("/api/device/tag-test/<request_id>")
+def device_tag_test_status_api(request_id):
+    if not _device_token_configured():
+        return jsonify({"success": False, "message": "设备接口未配置 PARTS_DEVICE_TOKEN"}), 503
+    if not _device_authorized():
+        return jsonify({"success": False, "message": "设备认证失败"}), 401
+    snapshot = tag_test_registry.snapshot(request_id)
+    if snapshot is None:
+        return jsonify({"success": False, "message": "测试任务不存在或已过期"}), 404
+    return jsonify({"success": True, **snapshot})
+
+
+@parts_bp.route("/api/device/tag-test/<request_id>/cancel", methods=["POST"])
+def device_tag_test_cancel_api(request_id):
+    if not _device_token_configured():
+        return jsonify({"success": False, "message": "设备接口未配置 PARTS_DEVICE_TOKEN"}), 503
+    if not _device_authorized():
+        return jsonify({"success": False, "message": "设备认证失败"}), 401
+    job = tag_test_registry.get(request_id)
+    if job is None:
+        return jsonify({"success": False, "message": "测试任务不存在或已过期"}), 404
+    with tag_owner_lock:
+        if not job.snapshot()["terminal"]:
+            job.request_cancel()
+            job.stop_confirmed = _stop_owned_tag_job(job)
+    return jsonify({"success": True, "message": "已请求停止测试", **job.snapshot()})
 
 
 @parts_bp.route("/api/face/verify", methods=["POST"])
@@ -866,6 +1404,11 @@ def face_verify_api():
             "application_id": application.id,
             "record_id": application.id,
             "status": application.record_status,
+            "inventory_managed": application.inventory_managed,
+            "guidance_status": application.guidance_status,
+            "guidance_message": application.guidance_message,
+            "inventory_note": "自由文本登记，未关联库存，不支持归还入库",
+            "inventory_status": application.inventory_status,
             "equipment": equipment_name,
         }
     )
@@ -899,47 +1442,82 @@ def face_apply_api():
     return jsonify(
         {
             "success": True,
-            "message": f"已为 {user.username} 登记借用记录，无需审批",
+            "message": f"已为 {user.username} 保存自由文本登记；未关联库存，不支持归还入库",
             "application_id": application.id,
             "record_id": application.id,
             "status": application.record_status,
             "equipment": equipment_name,
             "quantity": quantity,
+            "inventory_managed": application.inventory_managed,
+            "guidance_status": application.guidance_status,
+            "guidance_message": application.guidance_message,
+            "inventory_note": "自由文本登记，未关联库存，不支持归还入库",
+            "inventory_status": application.inventory_status,
         }
     ), 201
 
 
-def _point_to_cabinet_safely(cabinet_id, cabinet_number, delay):
-    try:
-        tag_id = int(str(cabinet_number).strip())
-        if tag_id < 0:
-            raise ValueError
-    except (TypeError, ValueError):
-        logger.warning(
-            "柜子 %s 的编号 %r 不是有效的 AprilTag ID，已跳过云台定位",
-            cabinet_id,
-            cabinet_number,
-        )
-        return
-    try:
-        with device_borrow_lock:
-            hardware.point_to_cabinet(tag_id, delay)
-    except Exception:
-        logger.warning("云台无法指向柜子 %s", cabinet_id, exc_info=True)
+def _set_guidance_status(application_id, status, message):
+    PartApplication.query.filter(PartApplication.id == application_id,
+                                 PartApplication.guidance_status.in_(("queued", "running"))).update({
+        "guidance_status": status, "guidance_message": str(message)[:2000],
+        "guidance_updated_at": utc_now(),
+    }, synchronize_session=False)
+    db.session.commit()
+
+
+def _point_to_cabinet_safely(app, application_id, cabinet_number, delay, timeout):
+    # A worker must own its Flask context and ORM session, never a request object.
+    with app.app_context():
+        try:
+            with device_borrow_lock:
+                claimed = PartApplication.query.filter_by(id=application_id, guidance_status="queued", returned_at=None).update({
+                    "guidance_status": "running", "guidance_message": "正在定位柜子",
+                    "guidance_updated_at": utc_now(),
+                }, synchronize_session=False)
+                db.session.commit()
+                if claimed != 1:
+                    return
+                try:
+                    tag_id = _parse_tag_id(cabinet_number)
+                except ValueError as exc:
+                    _set_guidance_status(application_id, "invalid_tag", str(exc))
+                    return
+                point = hardware.point_to_cabinet_status(tag_id, delay=delay, timeout=timeout) or {}
+                status = str(point.get("status") or "hardware_error")
+                if status not in {"aligned", "lost", "timeout", "cancelled", "hardware_error"}:
+                    status = "hardware_error"
+                _set_guidance_status(application_id, status, point.get("message") or status)
+        except Exception as exc:
+            db.session.rollback()
+            logger.warning("借用 %s 的硬件指引失败", application_id, exc_info=True)
+            try:
+                _set_guidance_status(application_id, "hardware_error", str(exc))
+            except Exception:
+                db.session.rollback()
+                logger.exception("无法保存指引失败状态")
+        finally:
+            db.session.remove()
 
 
 def _point_after_application(application):
-    if current_app.config.get("PARTS_SKIP_FACE_VERIFICATION") or not application.cabinet:
+    if application.guidance_status != "queued":
         return
-    threading.Thread(
-        target=_point_to_cabinet_safely,
-        args=(
-            application.cabinet.id,
-            application.cabinet.cabinet_number,
-            _setting_float("laser_delay"),
-        ),
-        daemon=True,
-    ).start()
+    try:
+        app = current_app._get_current_object()
+        timeout = float(app.config.get("PARTS_GUIDANCE_TIMEOUT", 30))
+        if not 1 <= timeout <= 180:
+            timeout = 30.0
+        threading.Thread(
+            target=_point_to_cabinet_safely,
+            args=(app, application.id, application.cabinet.cabinet_number,
+                  _setting_float("laser_delay"), timeout),
+            name=f"borrow-guide-{application.id}", daemon=True,
+        ).start()
+    except Exception as exc:
+        logger.exception("无法启动借用指引")
+        db.session.rollback()
+        _set_guidance_status(application.id, "hardware_error", f"无法启动指引: {exc}")
 
 
 def _command_worker(app, equipment_name):

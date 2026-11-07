@@ -267,8 +267,10 @@ def delete_comment(comment_id):
 def announcements():
     if not current_user.is_admin:
         abort(403)
-    items = Announcement.query.order_by(Announcement.created_at.desc()).all()
-    return render_template("community/announcements.html", announcements=items)
+    pagination = Announcement.query.order_by(Announcement.created_at.desc(), Announcement.id.desc()).paginate(
+        page=max(1, request.args.get("page", 1, type=int)), per_page=20, error_out=False
+    )
+    return render_template("community/announcements.html", announcements=pagination.items, pagination=pagination)
 
 
 @community_bp.route("/announcements", methods=["POST"])
@@ -318,11 +320,14 @@ def cloud():
     query = FileRecord.query
     if not current_user.is_admin:
         query = query.filter_by(user_id=current_user.id)
-    files = query.order_by(FileRecord.uploaded_at.desc()).all()
+    pagination = query.order_by(FileRecord.uploaded_at.desc(), FileRecord.id.desc()).paginate(
+        page=max(1, request.args.get("page", 1, type=int)), per_page=20, error_out=False
+    )
+    files = pagination.items
     user_used, site_used = _cloud_usage(current_user.id)
     user_limit, site_limit, file_limit = limits(current_app.config)
     return render_template(
-        "community/cloud.html", files=files,
+        "community/cloud.html", files=files, pagination=pagination,
         user_used=user_used, site_used=site_used,
         user_limit=user_limit, site_limit=site_limit, file_limit=file_limit,
         request_limit=current_app.config.get("MAX_CONTENT_LENGTH"),
@@ -542,13 +547,12 @@ def notifications():
     ).update({"is_read": True})
     if unread_count:
         db.session.commit()
-    items = (
+    pagination = (
         Notification.query.filter_by(user_id=current_user.id)
-        .order_by(Notification.created_at.desc())
-        .limit(100)
-        .all()
+        .order_by(Notification.created_at.desc(), Notification.id.desc())
+        .paginate(page=max(1, request.args.get("page", 1, type=int)), per_page=20, error_out=False)
     )
-    return render_template("community/notifications.html", notifications=items)
+    return render_template("community/notifications.html", notifications=pagination.items, pagination=pagination)
 
 
 @community_bp.route("/notifications/read-all", methods=["POST"])

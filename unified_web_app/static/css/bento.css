@@ -472,3 +472,5 @@ html[data-theme=bento] .auth-card .button.primary { min-height:46px; }
     html[data-theme=bento] .stock-row { flex-wrap:wrap; }
 }
 @media(prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; transition:none!important; animation:none!important; } }
+/* Shared list navigation, kept separate from the workspace sidebar. */
+.list-pagination { display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:12px; margin:24px 0; }

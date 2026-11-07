@@ -60,7 +60,7 @@ python simulate_xiaozhi_borrow.py --remote --execute
 
 脚本会要求库存中“锂电池”匹配到唯一零件；如果有多个型号，会停止并列出候选项，不会自行猜测。实际执行前请确认树莓派网站、MCP 配置、`PARTS_DEVICE_TOKEN`、摄像头和百度人脸服务均正常。
 
-前四个工具只读。`request_part_borrow` 不会自动扣减库存，也不会创建待审批申请；人脸验证通过后，网站会直接登记借用记录。成功结果以接口返回为准，通常为 `message`“借用已登记”、`status` 为 `recorded`，并返回 `record_id`；为兼容旧调用方，仍可能同时返回 `application_id`。
+前四个工具只读。`request_part_borrow` 在人脸验证通过后，由网站原子登记借用、扣减可用库存并写流水；不创建待审批申请。重复请求不重复扣减；归还通过网站操作恢复库存。历史和自由文本记录不回溯调整库存。成功结果以接口返回为准，`status` 为 `recorded`，返回 `record_id` 及兼容字段 `application_id`。云台指引异步执行，以单独的 `guidance_status` 为准。
 
 ## 借用登记配置
 

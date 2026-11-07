@@ -11,6 +11,8 @@ UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # Keep explicit aliases here: face login/register must always require CSRF.
 DEVICE_ENDPOINTS = frozenset({
     "parts.device_borrow_api",
+    "parts.device_tag_test_start_api",
+    "parts.device_tag_test_cancel_api",
     "parts.face_verify_api",
     "parts.face_apply_api",
     "parts.face_verify_compat",

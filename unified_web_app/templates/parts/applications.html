@@ -16,12 +16,12 @@
 <section class="section-heading">
     <span class="eyebrow">Parts keeper</span>
     <h1>我的借用记录</h1>
-    <p class="muted">直接登记借用，无需审批；名称、数量和柜号都留在这里。</p>
+    <p class="muted">选择库存零件后借用会扣减可用库存。历史和自由文本登记未关联库存，不能归还入库。</p>
 </section>
 
 <div class="parts-stats">
     <div class="parts-stat"><span class="muted">全部</span><strong>{{ counts.total }}</strong></div>
-    <div class="parts-stat"><span class="muted">已登记</span><strong>{{ counts.recorded }}</strong></div>
+    <div class="parts-stat"><span class="muted">已登记 / 已归还</span><strong>{{ counts.recorded }} / {{ counts.returned }}</strong></div>
     <div class="parts-stat"><span class="muted">历史记录（不代表已借出）</span><strong>{{ counts.historical }}</strong></div>
 </div>
 
@@ -52,6 +52,17 @@
                         <td>
                             <span class="badge {{ application.status }}">{{ application.record_status_label }}</span>
                             <div class="meta">#{{ application.id }}</div>
+                            <div class="meta" data-guidance-status="{{ application.guidance_status }}" data-guidance-message="{{ application.guidance_message or '' }}" data-status-url="{{ url_for('parts.application_status_api', application_id=application.id) }}">指引：{{ application.guidance_status_label }} · {{ application.guidance_message or '' }}</div>
+                            {% if application.inventory_managed and not application.returned_at %}
+                            <form method="post" action="{{ url_for('parts.return_application', application_id=application.id) }}" data-confirm="确认已完整归还这些零件？">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button class="button small" type="submit">归还入库</button>
+                            </form>
+                            {% elif application.returned_at %}
+                            <div class="meta">归还：{{ application.returned_at.strftime('%Y-%m-%d %H:%M') }}</div>
+                            {% else %}
+                            <div class="meta">未关联库存，不支持归还入库</div>
+                            {% endif %}
                             {% if application.reject_reason %}<div class="meta">历史备注：{{ application.reject_reason }}</div>{% endif %}
                         </td>
                     </tr>
@@ -64,12 +75,17 @@
 
     <aside class="panel" id="borrow-form">
         <h2>登记借用</h2>
-        <p class="muted">保存后立即生成记录，无需等待。库存数量仍由管理员维护。</p>
+        <p class="muted">库存借用请逐项选择同一柜子的零件；不选择库存零件时，仅保存自由文本登记，不扣减库存。</p>
         <form method="post" action="{{ url_for('parts.apply_equipment') }}" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div data-item-list>
                 <div class="item-row">
-                    <label>器材名称<input name="equipment_names[]" maxlength="200" required></label>
+                    <label>库存零件（可选）<select name="component_ids[]" data-borrow-component>
+                        <option value="">自由文本登记（不关联库存）</option>
+                        {% for cabinet in cabinets %}{% for component in cabinet.components %}
+                        <option value="{{ component.id }}" data-name="{{ component.component_name }}">{{ cabinet.cabinet_number }} 号柜 · {{ component.component_name }} · 可用 {{ component.quantity }}{{ component.unit }}</option>
+                        {% endfor %}{% endfor %}
+                    </select>器材名称<input name="equipment_names[]" maxlength="200" required></label>
                     <label>数量<input name="quantities[]" value="1" maxlength="30" required></label>
                     <button class="button small danger" type="button" data-remove-item aria-label="移除此项">移除</button>
                 </div>

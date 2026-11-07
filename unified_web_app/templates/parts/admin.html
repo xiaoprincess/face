@@ -99,6 +99,8 @@
                 <div data-component-list>
                 {% for component in cabinet.components %}
                     <div class="component-row">
+                        <input type="hidden" name="component_ids[]" value="{{ component.id }}">
+                        <input type="hidden" name="component_original_quantities[]" value="{{ component.quantity }}">
                         <label>名称<input name="component_names[]" value="{{ component.component_name }}" maxlength="200"></label>
                         <label>数量<input name="component_quantities[]" type="number" min="0" value="{{ component.quantity }}"></label>
                         <label>单位<input name="component_units[]" value="{{ component.unit }}" maxlength="30"></label>

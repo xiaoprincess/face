@@ -179,11 +179,12 @@ class UnifiedAppTestCase(IsolatedAppTestCase):
         self.assertEqual(second.status_code, 201)
         self.assertFalse(second.get_json()["duplicate"])
         self.assertEqual(second.get_json()["items"][0]["quantity"], "2")
-        self.assertEqual(repeated.status_code, 200)
+        self.assertEqual(repeated.status_code, 409)
         self.assertTrue(repeated.get_json()["duplicate"])
         self.assertEqual(repeated.get_json()["record_id"], second.get_json()["record_id"])
         with self.app.app_context():
             self.assertEqual(PartApplication.query.count(), 2)
+            self.assertEqual(db.session.get(CabinetComponent, component_id).quantity, 17)
 
     def test_realtime_connection_and_private_upload_storage(self):
         self.register_admin()

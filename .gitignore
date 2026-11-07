@@ -47,6 +47,10 @@ web/test.jpg
 # ---------------------------------------------------------------------------
 # 编辑器 / 系统 / 工具本地配置
 # ---------------------------------------------------------------------------
+# AprilTag 桌面模拟程序的本地配置（含设备令牌/地址，不提交）
+apriltag_sim/config.json
+apriltag_sim/tests/tmp/
+apriltag_sim/tests/.tmp-leftovers/
 .claude/
 Thumbs.db
 desktop.ini
