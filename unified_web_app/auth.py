@@ -1,7 +1,17 @@
 import base64
+import hashlib
 from urllib.parse import urlsplit
 
-from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
+from flask import (
+    Blueprint,
+    current_app,
+    flash,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
 from flask_login import current_user, login_user, logout_user
 
 from core_models import User
@@ -11,6 +21,15 @@ from parts_models import SystemSetting
 
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/auth")
+
+
+def _password_fingerprint(password_hash):
+    """Session-side marker so admin password resets can invalidate old logins."""
+    return hashlib.sha256((password_hash or "").encode("utf-8")).hexdigest()
+
+
+def _mark_session_password(user):
+    session["_auth_pw_fingerprint"] = _password_fingerprint(user.password_hash)
 
 
 def _disconnect_user_sockets(user_id):
@@ -133,6 +152,7 @@ def register():
                     register_face=register_face,
                 ), 500
             login_user(user)
+            _mark_session_password(user)
             message = "注册成功。你是首个账号，已成为管理员。" if is_first_user else "注册成功"
             if register_face:
                 message += " 人脸信息已同步登记。"
@@ -154,13 +174,18 @@ def login():
             (User.username == identity) | (User.email == identity.lower())
         ).first()
         if user and user.check_password(password):
-            if user.uses_legacy_password_hash:
-                user.set_password(password)
-            user.last_seen = utc_now()
-            db.session.commit()
-            login_user(user, remember=request.form.get("remember") == "on")
-            return redirect(_safe_next_url())
-        flash("用户名、邮箱或密码错误", "error")
+            if not user.is_active:
+                flash("该账号已被停用，如有疑问请联系管理员", "error")
+            else:
+                if user.uses_legacy_password_hash:
+                    user.set_password(password)
+                user.last_seen = utc_now()
+                db.session.commit()
+                login_user(user, remember=request.form.get("remember") == "on")
+                _mark_session_password(user)
+                return redirect(_safe_next_url())
+        else:
+            flash("用户名、邮箱或密码错误", "error")
 
     return render_template("auth/login.html")
 

@@ -264,6 +264,14 @@ class HardwareService:
             options=options,
         )
 
+    def delete_face(self, user_id, config=None, group_id="equipment_users"):
+        """Remove a user from the Baidu face group; callers tolerate failures."""
+        client = self._get_face_client(config)
+        return client.deleteUser(
+            user_id=str(user_id),
+            group_id=group_id,
+        )
+
     def capture_face(self):
         with self._operation_lock:
             try:

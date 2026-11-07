@@ -2,12 +2,12 @@ import os
 import secrets
 from pathlib import Path
 
-from flask import Flask, jsonify, redirect, render_template, url_for
-from flask_login import current_user, login_required
+from flask import Flask, flash, jsonify, redirect, render_template, session, url_for
+from flask_login import current_user, login_required, logout_user
 from dotenv import load_dotenv
 
-from auth import auth_bp
-from core_models import User
+from auth import _password_fingerprint, auth_bp
+from core_models import User, migrate_user_schema
 from extensions import db, login_manager, socketio
 from security import init_csrf
 
@@ -92,6 +92,24 @@ def create_app(test_config=None):
     def load_user(user_id):
         return db.session.get(User, int(user_id))
 
+    @app.before_request
+    def _sign_out_disabled_users():
+        # 已登录但被停用的账号在下一次请求时立即失效；借用与社区数据保留。
+        if not current_user.is_authenticated:
+            return
+        if not current_user.is_active:
+            logout_user()
+            flash("账号已被停用，如有疑问请联系管理员", "error")
+            return
+        # 管理员重置密码后，旧登录会话失效。缺失指纹的旧会话不受影响，
+        # 下次登录起开始记录。
+        fingerprint = session.get("_auth_pw_fingerprint")
+        if fingerprint is not None and fingerprint != _password_fingerprint(
+            current_user.password_hash
+        ):
+            logout_user()
+            flash("密码已被管理员重置，请使用新密码重新登录", "error")
+
     @app.route("/")
     def index():
         if current_user.is_authenticated:
@@ -125,6 +143,7 @@ def create_app(test_config=None):
         )
 
         db.create_all()
+        migrate_user_schema()
         migrate_parts_schema(recover_guidance=app.config["PARTS_RECOVER_GUIDANCE_ON_STARTUP"])
 
     return app

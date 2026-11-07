@@ -26,9 +26,12 @@ from flask import (
 )
 from flask_login import current_user, login_required, login_user
 from werkzeug.utils import secure_filename
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 
 from apriltag_test import JobCapacityError, JobConflictError, registry as tag_test_registry
+from auth import _disconnect_user_sockets
+from community_models import Announcement, BlogPost, Comment, FileRecord, Message, Notification
 from core_models import User
 from extensions import db, utc_now
 from hardware import HardwareUnavailable, hardware
@@ -383,7 +386,7 @@ def admin_dashboard():
     active_tab = request.args.get("tab", "inventory").strip().lower()
     if active_tab == "applications":  # Existing bookmarks remain valid.
         active_tab = "records"
-    if active_tab not in {"records", "inventory", "create"}:
+    if active_tab not in {"records", "inventory", "create", "users"}:
         active_tab = "inventory"
     query = PartApplication.query.order_by(
         PartApplication.created_at.desc(),
@@ -399,6 +402,31 @@ def admin_dashboard():
         if component.quantity <= 5
     )
     settings = {key: _setting_float(key) for key in SETTING_RULES}
+    users = []
+    borrow_counts = {}
+    users_total = User.query.count()
+    user_search = (request.args.get("q") or "").strip()
+    if active_tab == "users":
+        users_query = User.query
+        if user_search:
+            keyword = (
+                user_search.replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_")
+            )
+            pattern = f"%{keyword}%"
+            users_query = users_query.filter(
+                or_(
+                    User.username.ilike(pattern, escape="\\"),
+                    User.email.ilike(pattern, escape="\\"),
+                )
+            )
+        users = users_query.order_by(User.created_at.asc(), User.id.asc()).all()
+        borrow_counts = dict(
+            db.session.query(PartApplication.user_id, func.count(PartApplication.id))
+            .group_by(PartApplication.user_id)
+            .all()
+        )
     return render_template(
         "parts/admin.html",
         active_tab=active_tab,
@@ -408,7 +436,10 @@ def admin_dashboard():
         component_count=component_count,
         low_stock_count=low_stock_count,
         settings=settings,
-        user_count=User.query.filter_by(role="user").count(),
+        users=users,
+        users_total=users_total,
+        user_search=user_search,
+        borrow_counts=borrow_counts,
         hardware_status=hardware.status(current_app.config),
     )
 
@@ -584,6 +615,144 @@ def cabinet_batch_delete():
         db.session.commit()
         flash(f"已删除 {len(ids)} 个柜子，历史借用记录已保留", "success")
     return redirect(url_for("parts.admin_dashboard", tab="inventory"))
+
+
+def _users_tab_url():
+    return url_for("parts.admin_dashboard", tab="users")
+
+
+@parts_bp.route("/admin/users/<int:user_id>/toggle-active", methods=["POST"])
+@admin_required
+def user_toggle_active(user_id):
+    user = db.session.get(User, user_id)
+    if user is None:
+        abort(404)
+    if user.id == current_user.id:
+        flash("不能停用自己的账号", "error")
+        return redirect(_users_tab_url())
+    user.is_active = not user.is_active
+    db.session.commit()
+    if not user.is_active:
+        _disconnect_user_sockets(user.id)
+        flash(f"已停用 {user.username}，其登录会话已下线，借用记录全部保留", "success")
+    else:
+        flash(f"已启用 {user.username}", "success")
+    return redirect(_users_tab_url())
+
+
+@parts_bp.route("/admin/users/<int:user_id>/reset-password", methods=["POST"])
+@admin_required
+def user_reset_password(user_id):
+    user = db.session.get(User, user_id)
+    if user is None:
+        abort(404)
+    if user.id == current_user.id:
+        flash("不能在这里重置自己的密码", "error")
+        return redirect(_users_tab_url())
+    new_password = request.form.get("new_password") or ""
+    if not 8 <= len(new_password) <= 128:
+        flash("密码至少需要 8 位", "error")
+        return redirect(_users_tab_url())
+    user.set_password(new_password)
+    db.session.commit()
+    _disconnect_user_sockets(user.id)
+    flash(f"已重置 {user.username} 的密码，其已有登录已全部下线", "success")
+    return redirect(_users_tab_url())
+
+
+@parts_bp.route("/admin/users/<int:user_id>/role", methods=["POST"])
+@admin_required
+def user_set_role(user_id):
+    user = db.session.get(User, user_id)
+    if user is None:
+        abort(404)
+    role = (request.form.get("role") or "").strip()
+    if role not in {"admin", "user"}:
+        flash("角色参数无效", "error")
+        return redirect(_users_tab_url())
+    if user.id == current_user.id:
+        flash("不能修改自己的角色", "error")
+        return redirect(_users_tab_url())
+    user.role = role
+    db.session.commit()
+    if role == "admin":
+        flash(f"已将 {user.username} 设为管理员", "success")
+    else:
+        flash(f"已取消 {user.username} 的管理员权限", "success")
+    return redirect(_users_tab_url())
+
+
+@parts_bp.route("/admin/users/<int:user_id>/delete", methods=["POST"])
+@admin_required
+def user_delete(user_id):
+    user = db.session.get(User, user_id)
+    if user is None:
+        abort(404)
+    if user.id == current_user.id:
+        flash("不能删除自己的账号", "error")
+        return redirect(_users_tab_url())
+    borrow_count = PartApplication.query.filter_by(user_id=user.id).count()
+    if borrow_count:
+        flash(
+            f"{user.username} 名下有 {borrow_count} 条借用记录，为保留记录请改用「停用」",
+            "error",
+        )
+        return redirect(_users_tab_url())
+
+    username = user.username
+    face_registered = user.face_registered
+
+    upload_folder = Path(current_app.config["UPLOAD_FOLDER"])
+    cloud_files = FileRecord.query.filter_by(user_id=user.id).all()
+    cloud_paths = [upload_folder / record.filename for record in cloud_files]
+
+    post_ids = [
+        post_id
+        for (post_id,) in db.session.query(BlogPost.id)
+        .filter(BlogPost.user_id == user.id)
+        .all()
+    ]
+    if post_ids:
+        Comment.query.filter(Comment.post_id.in_(post_ids)).delete(
+            synchronize_session=False
+        )
+        BlogPost.query.filter(BlogPost.id.in_(post_ids)).delete(
+            synchronize_session=False
+        )
+    Comment.query.filter(Comment.user_id == user.id).delete(synchronize_session=False)
+    Message.query.filter(
+        or_(Message.sender_id == user.id, Message.receiver_id == user.id)
+    ).delete(synchronize_session=False)
+    Notification.query.filter(
+        or_(Notification.user_id == user.id, Notification.sender_id == user.id)
+    ).delete(synchronize_session=False)
+    Announcement.query.filter(Announcement.user_id == user.id).delete(
+        synchronize_session=False
+    )
+    PartApplication.query.filter(PartApplication.returned_by_id == user.id).update(
+        {"returned_by_id": None}, synchronize_session=False
+    )
+    PartApplication.query.filter(PartApplication.reviewed_by_id == user.id).update(
+        {"reviewed_by_id": None}, synchronize_session=False
+    )
+    for record in cloud_files:
+        db.session.delete(record)
+    db.session.delete(user)
+    db.session.commit()
+
+    for path in cloud_paths:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("删除用户云盘文件失败: %s", path, exc_info=True)
+    if face_registered:
+        try:
+            hardware.delete_face(user_id, current_app.config, _group_id())
+        except Exception:
+            logger.warning("删除百度人脸失败（账号已删除）", exc_info=True)
+
+    flash(f"已删除 {username} 及其社区数据", "success")
+    return redirect(_users_tab_url())
 
 
 @parts_bp.route("/admin/settings", methods=["GET", "POST"])

@@ -23,6 +23,7 @@
     <a class="{% if active_tab == 'inventory' %}active{% endif %}" {% if active_tab == 'inventory' %}aria-current="page"{% endif %} href="{{ url_for('parts.admin_dashboard', tab='inventory') }}">{{ icon('box') }}库存管理</a>
     <a class="{% if active_tab == 'records' %}active{% endif %}" {% if active_tab == 'records' %}aria-current="page"{% endif %} href="{{ url_for('parts.admin_dashboard', tab='records') }}">{{ icon('check') }}借用记录 <span class="tab-count">{{ counts.recorded }}</span></a>
     <a class="{% if active_tab == 'create' %}active{% endif %}" {% if active_tab == 'create' %}aria-current="page"{% endif %} href="{{ url_for('parts.admin_dashboard', tab='create') }}">{{ icon('plus') }}新增柜子</a>
+    <a class="{% if active_tab == 'users' %}active{% endif %}" {% if active_tab == 'users' %}aria-current="page"{% endif %} href="{{ url_for('parts.admin_dashboard', tab='users') }}">{{ icon('user') }}用户管理 <span class="tab-count">{{ users_total }}</span></a>
 </nav>
 
 {% if active_tab == 'records' %}
@@ -73,6 +74,67 @@
         </div>
         <div class="actions"><button class="button small" type="button" data-add-component>添加元件</button><button class="button primary" type="submit">创建柜子</button></div>
     </form>
+</section>
+{% elif active_tab == 'users' %}
+<section class="panel admin-section users-section">
+    <div class="toolbar">
+        <div><h2>用户管理</h2><span class="meta">共 {{ users_total }} 个账号{% if user_search %} · “{{ user_search }}”匹配 {{ users|length }} 个{% endif %} · 停用会保留全部借用记录与发帖</span></div>
+        <form class="inventory-actions" method="get" action="{{ url_for('parts.admin_dashboard') }}">
+            <input type="hidden" name="tab" value="users">
+            <label class="inventory-search-wrap">{{ icon('search') }}<input class="inventory-search" type="search" name="q" value="{{ user_search }}" placeholder="搜索用户名或邮箱…" aria-label="搜索用户"></label>
+            <button class="button small" type="submit">搜索</button>
+        </form>
+    </div>
+    {% if users %}
+    <div class="table-wrap">
+        <table class="users-table">
+            <thead><tr><th>用户</th><th>角色</th><th>人脸 / 借用</th><th>注册 / 最近活跃</th><th>操作</th></tr></thead>
+            <tbody>
+            {% for user in users %}
+                <tr>
+                    <td><strong>{{ user.username }}</strong>{% if not user.is_active %} <span class="badge rejected">已停用</span>{% endif %}<div class="meta">{{ user.email }}</div></td>
+                    <td>{% if user.is_admin %}<span class="badge approved">管理员</span>{% else %}<span class="muted">普通用户</span>{% endif %}</td>
+                    <td>{{ '已注册' if user.face_registered else '未注册' }}<div class="meta">借用 {{ borrow_counts.get(user.id, 0) }} 条</div></td>
+                    <td><div>{{ user.created_at.strftime('%Y-%m-%d') }}</div><div class="meta">最近 {{ user.last_seen.strftime('%Y-%m-%d %H:%M') }}</div></td>
+                    <td class="user-actions">
+                        {% if user.id == current_user.id %}
+                            <span class="muted">当前登录账号</span>
+                        {% else %}
+                            <div class="user-action-row">
+                                <form method="post" action="{{ url_for('parts.user_toggle_active', user_id=user.id) }}">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    {% if user.is_active %}
+                                    <button class="button small danger" type="submit" data-confirm="停用后 {{ user.username }} 将无法登录并立即下线，借用记录全部保留。确定继续吗？">停用</button>
+                                    {% else %}
+                                    <button class="button small" type="submit">启用</button>
+                                    {% endif %}
+                                </form>
+                                <form method="post" action="{{ url_for('parts.user_set_role', user_id=user.id) }}">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="role" value="{{ 'user' if user.is_admin else 'admin' }}">
+                                    <button class="button small" type="submit" data-confirm="{{ '取消 ' ~ user.username ~ ' 的管理员权限？' if user.is_admin else '授予 ' ~ user.username ~ ' 管理员权限？' }}">{{ '取消管理员' if user.is_admin else '设为管理员' }}</button>
+                                </form>
+                            </div>
+                            <details class="user-reset">
+                                <summary>重置密码</summary>
+                                <form method="post" action="{{ url_for('parts.user_reset_password', user_id=user.id) }}" data-confirm="重置后 {{ user.username }} 的当前登录会立即失效。确定继续吗？">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <label>新密码<input type="password" name="new_password" minlength="8" maxlength="128" required placeholder="至少 8 位"></label>
+                                    <button class="button small primary" type="submit">确认重置</button>
+                                </form>
+                            </details>
+                            <form method="post" action="{{ url_for('parts.user_delete', user_id=user.id) }}" data-confirm="删除 {{ user.username }} 会同时删除其帖子、评论、私聊与云盘文件且不可恢复；名下有借用记录时将无法删除。确定继续吗？">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button class="button small danger" type="submit">删除用户</button>
+                            </form>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}<p class="muted">没有匹配的用户。</p>{% endif %}
 </section>
 {% else %}
 <section class="admin-section cabinet-section">

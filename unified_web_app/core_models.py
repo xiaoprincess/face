@@ -17,6 +17,7 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(20), nullable=False, default="user")
     face_registered = db.Column(db.Boolean, nullable=False, default=False)
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
     created_at = db.Column(db.DateTime, nullable=False, default=utc_now)
     last_seen = db.Column(db.DateTime, nullable=False, default=utc_now)
 
@@ -36,3 +37,19 @@ class User(UserMixin, db.Model):
     @property
     def is_admin(self):
         return self.role == "admin"
+
+
+def migrate_user_schema():
+    """Add is_active to legacy SQLite users tables without touching rows."""
+    if db.engine.dialect.name != "sqlite":
+        return
+    with db.engine.begin() as connection:
+        columns = {
+            row[1] for row in connection.execute(db.text("PRAGMA table_info(users)"))
+        }
+        if "is_active" not in columns:
+            connection.execute(
+                db.text(
+                    "ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT 1"
+                )
+            )
